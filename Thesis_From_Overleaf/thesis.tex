@@ -1,0 +1,180 @@
+\documentclass[12pt,a4paper]{article}
+%\documentclass[12pt,a4paper]{amsart}
+ 
+
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+ \usepackage{tikz}
+
+ \usepackage{adjustbox}
+
+ \usepackage{booktabs}
+ \usepackage{dcolumn} 
+\usepackage{siunitx}
+\usepackage{amssymb}
+\usepackage{float}
+\usepackage{graphicx}
+\usepackage{dsfont}
+
+\usepackage{tablefootnote}
+
+\usepackage{mwe}
+%\usepackage{subfig}
+%\usepackage[left=2.6cm,right=2.6cm,headsep=0.5cm, bottom=2.7cm, top= 2cm]{geometry}
+\usepackage[left=2.6cm, right=2.6cm, bottom=3cm, top=2cm, footskip = 2cm]{geometry}
+%\setlength{\footskip}{15pt}
+\usepackage[toc,page]{appendix}
+\usepackage{adjustbox}
+
+
+\usepackage{enumitem}
+\usepackage{setspace}
+%\doublespacing
+\setstretch{1.1}
+\usepackage{array, booktabs, multirow, threeparttable}
+
+\usepackage{titling}
+\usepackage{arydshln}
+
+\usepackage{subcaption}
+\usepackage{caption}
+ \captionsetup{justification=centering}
+ 
+\usepackage{booktabs,tabularx}
+%\usepackage[input-decimal-markers=.]{siunitx}
+
+\usepackage[bottom]{footmisc}
+\author{Nicolai Waldstrøm}
+
+
+
+\title{The Effects of Innovation: An Empirical Analysis based on US Metro Areas and States\thanks{Keystrokes: 35.978 (main body), 15.433 (appendix). }  \\ 
+        \large Term Paper in the Subject of Economic Growth}        
+\date{December 2020}
+\usepackage{enumerate}
+
+\usepackage{natbib}
+%\bibliographystyle{plainnat}
+\bibliographystyle{IEEEtranN}
+
+
+\setcitestyle{authoryear, open={((},close={)}}
+
+\def\code#1{\texttt{#1}}
+
+%\usepackage[ruled,vlined]{algorithm2e}
+%\DontPrintSemicolon
+%\newcommand{\To}{\mbox{\upshape\bfseries to}}
+
+\usepackage[colorlinks, citecolor=blue, linkcolor =blue ,urlcolor =.,bookmarks=true]{hyperref}
+\usepackage{bookmark}
+
+\interfootnotelinepenalty=10000
+
+% FOR CHAPTERS 
+%\usepackage{tocloft}
+%\renewcommand{\cftpartleader}{\cftdotfill{\cftdotsep}} % for parts
+%\renewcommand{\cftchapleader}{\cftdotfill{\cftdotsep}} % for chapters
+%\renewcommand{\cftsecleader}{\cftdotfill{\cftdotsep}} % for sections, if you really want! (It is default in report and book class (So you may not need it).
+
+\hypersetup{bookmarksdepth=3}
+
+% Section formating?
+\usepackage{sectsty}
+\sectionfont{\normalfont\scshape\centering}
+\subsectionfont{\normalfont\scshape\centering}
+%\subsubsectionfont{\boldfont\scshape\centering}
+%\subsubsectionfont{\normalfont\itshape \raggedright}
+\usepackage{titlesec}
+
+\titleformat{\subsubsection}[runin]{\bfseries\scshape}{}{}{}[]
+%\titleformat{\section}[hang]{\bfseries\scshape}{\thesection}{2ex}{}[]
+
+       
+%\subsubsectionfont{\normalfont\itshape \raggedright}
+
+%\subsubsectionfont{\normalfont\scshape\centering}
+
+%\renewcommand{\thesection}{\Roman{section}.}
+%\renewcommand{\thesection}{\Roman{section}.}
+
+%\sectionfont{\centering}
+
+%\renewcommand{\thesubsection}{\thesection\Alph{subsection}.}
+%\subsectionfont{\normalfont}
+%\subsectionfont{\centering}
+%\subsectionfont{\normalfont\centering\itshape}
+\usepackage{bbm}
+
+\newcommand{\eqname}[1]{\tag*{#1}}% Tag equation with name
+\usepackage{makecell}
+
+
+\usepackage{standalone} % to include tikz picutres from .tex file 
+\usepackage{tikz}
+\usetikzlibrary{arrows,positioning,automata, fit}
+
+
+
+\begin{document}
+
+
+
+
+\setcounter{tocdepth}{4}		% define depth of toc
+%\pdfbookmark{\contentsname}{toc}
+\tableofcontents				% display table of contents
+\clearpage
+
+
+% -------------------------- 
+% Main matter
+% --------------------------
+\pagenumbering{arabic}			% arabic page numbering
+\setcounter{page}{1}			% set page counter
+\pagestyle{maincontentstyle} 	% fancy header and footer
+
+
+\input{mainmatter/Introduction} % INCLUDE Perspectives
+%\pagebreak 
+\input{mainmatter/Model.tex} % INCLUDE Introduction
+\input{mainmatter/Sol_method.tex}   % INCLUDE Discussion
+\input{mainmatter/Calibration.tex}   % INCLUDE Discussion
+\input{mainmatter/Consumption_analysis}   % INCLUDE Discussion
+\input{mainmatter/AutoStab.tex}   % INCLUDE Discussion
+\input{mainmatter/Labor_market_analysis}   % INCLUDE Discussion
+
+%\input{mainmatter/Cyclical_wages.tex}   % INCLUDE Discussion
+
+%\input{mainmatter/Expanded_LM}   % INCLUDE Discussion
+
+% References 
+\pagebreak 
+%\addcontentsline{toc}{chapter}{Bibliography}
+\input{frontbackmatter/bibliography.tex}
+
+% Appendix 
+\pagebreak 
+\renewcommand{\appendixname}{\centering Appendix}
+\renewcommand{\appendixpagename}{\centering Appendix}
+\renewcommand{\appendixtocname}{Appendix}
+
+
+\begin{appendices}
+\counterwithin{figure}{section}
+%\addtocontents{toc}{\protect\setcounter{tocdepth}{0}}
+\addtocontents{toc}{\def\protect\cftchappresnum{\appendixname{} }}
+
+\input{mainmatter/Appendix}   % INCLUDE Discussion
+
+\end{appendices}
+
+% -------------------------- 
+% Back matter
+% --------------------------
+
+% ********************************************************* 
+% END OF THESIS
+% *********************************************************
+\end{document}

@@ -1,0 +1,100 @@
+
+\subsection{Equilibrium Determinacy}
+In general we can imagine that there are multiple unknowns in the model instead of just assets $\boldsymbol{A}$. Let $U$ denote the vector of these. In equilibrium, the model solves the general condition $\boldsymbol{H}\left(\boldsymbol{U},\mathbf{Z},D_{0}\right)=0$ and the implicit differentiation yields: 
+\begin{gather*}
+d\boldsymbol{U}=-\boldsymbol{H_{U}}^{-1}\boldsymbol{H_{Z}}d\boldsymbol{Z}
+\end{gather*}
+\citet{auclert2019using} shows that indeterminacy implies singularity in the matrix $\boldsymbol{H_{U}}$, and hence the above condition is not well defined since the inverse $\boldsymbol{H_{U}}^{-1}$ does not exist. Thus, determinacy is crucial when applying their SHADE method since otherwise the model is generally unsolvable. 
+
+The intuition provided by Auclert et. al in \citet{auclert2018intertemporal} regarding indeterminacy in NK models is that self-sustaining demand can lead to many different equilibrium paths and hence indeterminacy. In particular, if agents expect a particular income path their demand adjusts to this path and the equilibrium becomes self-fulfilling. For incomplete market models such as HANK models, precautionary savings can induce this channel if risk is counter-cyclical. If households households expect an increase in income in the future ("\textit{Good times}") precautionary savings imply a stronger consumption respons today than under complete markets, which can lead to an explosive equilibrium path. This is also discussed in \citet{ravn2016macroeconomic}, \citet{bilbiie2018monetary}, \citet{acharya2020understanding}.
+
+
+Since \citet{woodford2003interest} the Taylor rule has been a well known instrument do induce determinacy into NK models. 
+
+Auclert et. al. show that determinacy under a Taylor rule can ultimately depends two model characteristics: 1) To which degree does households push consumption into the future, and 2) To which degree does the economy respond to changes in the real interest rate. 
+
+% Auclert et. al: Determinacy when demand is pushed enough into the future 
+% Higher nominal interest rate -> higher real interest rate next period if Taylor satisfied -> demand is pushed into the future 
+
+% With government budget (bonds): An increase in the real interest rate today increases expenses and hence the supply of bonds. 
+% For an asset market equilibrium to attain, the real interest rate must increase further since households now need to demand more assets. 
+% This implies a decrease in inflation since i is fixed. 
+% The decrease in inflation this period implies 
+
+
+\footnote{In their setup the exact generalized Taylor principle also depends on the discount factor of the households and the degree of price rigidity}
+
+
+\footnote{This draws upon an early version of the paper \citet{auclert2018intertemporal} in which they derive determinacy results and conditions for a relatively general HANK model. The version containing these results can be obtained from the authors upon request. }
+
+
+
+
+
+
+
+In simpler NK models where monetary policy manifests in a Taylor rule it is well known that satisfying the Taylor principle (nominal interests rates react more than one-to-one w.r.t inflation) is a necessarily condition for a determinate equilibrium. Not satisfying this principle implies that an increase in inflation will decrease the real interest rate, which stimulus demand, thus in turn increasing firms marginal costs and hence leading to a further increase in inflation. 
+
+HANK models feature several new features that may affect determinacy, the most prominent one being \textit{risk} in its effect on asset demand - see \citet{ravn2016macroeconomic}, \citet{bilbiie2018monetary}, \citet{acharya2020understanding}. 
+To see this, note that in the simple NK models what gives determinacy is that demand declines in response to a real interest shock. Assume first that risk is countercyclical, that is, households increase precautionary savings in contractions because risk is higher. I will discuss more what \textit{risk} entails below. Imagine, in this setting an interest rate shock. In the canonical NK model households are rational, forward looking agents and hence postpone consumption in response to an increase in the real interest rate and so demand declines. In addition to this an increase in the interest rate also increases the price of investment, and firm demand for capital and labor hence decline. 
+
+In the HANK framework with countercyclical risk an increase in the real interest rate contracts firm activity, and household risk exposure increases. As such, there are now two effects on consumption (ignoring constraint households whose consumption choice simply depends on how after-tax income moves): 1) A negative effect on consumption through intertemporal substitution as in the standard NK model, and 2) a negative effect on consumption since households in increase precautionary savings in response to higher risk.      
+
+
+\citet{auclert2018inequality}: Fixed interest rules, but can still attain determinate equilibrium under certain conditions. 
+Countercylical income risk can potentially general multiple equilibria (i.e. indeterminacy )
+Requires that the elasticity of asset demand exceeds the elasticity of asset supply w.r.t Labor (labor in their model proxies income since wages are constant under certain conditions).  
+Channel: If employment declines household income declines, and risk increases (i.e. countercyclical risk). A precautionary savings motive enters, and asset demand increases. 
+(point: both asset demand and asset supply is increasing L (income), and hence the relative slopes determine the number of equilibria)
+
+
+ % Regarding Taylor principle:
+ 
+ % Intuitioin. In simpler DSGE/NK models a unit increase in inflation requires a more than unit increase in the nominal interest rate 
+ % Such that the real interest rate increases. This in turn decreases demand and hence marginal costs -> decreases inflation. 
+ 
+ % Thus the Taylor principle holds when aggregate demand is decreasing in the real interest rate.
+ % Is this the case above? Especially when the government adjusts bonds? 
+ 
+ % let us consider the bonds channel first:
+ % An increase in the real interest rate increases government expenses (interest rate payments) and hence more debt most be issued in period t. 
+ 
+ % asset market equilibrium implies that A must increase since p is determined from future states. 
+ % Increase in bonds imply that the real return must decline, i.e. inflation must increase. 
+ 
+ % So, two opposing forces: Higher savings -> less consumption/demand, but higher return on existing savings:
+ % dC =  A_{t-1} dR  -dA_t 
+ 
+ % AGAIN.
+ 
+ % Increase in inflation today increases real interest rate next period 
+ % This decreases consumption/investment (demand) today and increases C next period (and somewhat similarly for investment).
+ 
+ % Also increases supply of bonds next period (due to more interest payments in the next period). 
+ % Assets also increase in t+1, but in the partial equilibrium (before full asset market equilibrium is obtained) they increase more than bonds. 
+ 
+ % demand for assets > supply of bonds 
+ % requires price decrease to get equilibrium -> lower real interest rate -> higher inflation. 
+ 
+ 
+ %So, why do demand for assets react less than bonds? 
+ 
+ 
+ 
+ % So, some papers (Ravn & sterk, see "views from a PRANK") finds that countercyclical income risk can make indeterminacy more pronounced. 
+ % Fiscal policy affects whether/ and how much income risk is countercyclical 
+ 
+ %This cyclicality of income risk is endogenous. In particular, it depends on the cyclicality of fiscal policy,
+%and on whether redistribution increases or decreases when output is low. This highlights a new dimension
+%of monetary-fiscal interaction, distinct from (but related to) the traditional question concerning whether
+%the fiscal authority adjusts surpluses in order to repay government debt along any hypothetical price path
+%(Leeper, 1991). In HANK economies, what matters is not just the expected path of surpluses, but whether
+%those surpluses are raised in ways that increase or decrease the variance of households’ after-tax income,
+%and whether this depends on the overall level of economic activity.
+
+ 
+ 
+ 
+ 
+
+

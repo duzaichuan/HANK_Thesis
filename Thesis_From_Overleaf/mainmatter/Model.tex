@@ -1,0 +1,307 @@
+
+
+
+
+\section{A HANK-SAM Model Featuring Automatic Stabilizers} \label{chap:Model1}
+This section presents the main model. The backbone of the model is the HANK-framework, which merges the often applied New-Keynesian models with a household sector containing heterogeneous agents a la \citet{aiyagari1994uninsured}, \citet{krusell1998income}. The NK ingredients include investment adjustment costs, price rigidities and firm market power. Additionally, the model features a basic search-and-matching (SAM). 
+To properly analyze automatic stabilizers the model features the main stabilizers for western economies. These include unemployment benefits, progressive income taxes, along with consumption, dividend and corporate taxes. Given all these taxes and transfers the government has an extensive budget which is balanced through bonds and lump sum transfers. A mutual fund manages the supply of assets from households and decides whether to invest in government bonds or firm equity as in  \citet{gornemann2016doves}, \citet{auclert2020micro}.     \\
+Similar models have been applied in the recent literature. \citet{hagedorn2019fiscal} is perhaps the closest resembling model, with key differences being that their model features endogenous labor supply, no search and matching labor market, and price determinant through nominal assets and bonds (see \citet{hagedorn2018prices}). This allows them to inspect fiscal multipliers in the presence of a constant interest rate rule, as opposed to a Taylor rule. 
+\citet{gornemann2016doves} focuses on distributional impacts of monetary policy. Their model is a merged HANK and SAM model, but features only a minimal number of taxes and benefits as opposed to the one presented here. In addition, their model features aggregate uncertainty. \\
+Regarding the evaluation of automatic stabilizers the closest paper is \citet{mckay2016role}. Their model also features uninsurable risk, though only for a fraction of the population (the impatient consumers). The main model contains only exogenous transitions between employment states, but the authors let the Markov chain governing the transition depend on aggregate shocks. Comparably, the addition of search-and-matching labor market in this paper adds an endogenous theory of unemployment as well as being somewhat resistant to the Lucas critique. 
+% what does SAM contribute with? -> introduction
+As shown in \citet{auclert2020mpcs} combining HANK models with search frictions, and hence the possibility of wage rigidities, allows the model to simultaneity match empirical MPCs and marginal propensities to earn (i.e. the response of the intensive labor supply margin - hours to changes in income) without resorting to non-standard (non-separable) preferences.  
+
+
+
+\subsection{Households}
+There is a continuum of infinitely-lived single-member households of mass 1. Households are heterogeneous in several dimensions, and the expected lifetime utility of a household $i$ depends on a basket of non-durable goods $c_{i,t}$. Lifetime utility is given by:
+\begin{align}
+%\mathbb{E}_{t}U_{i,t}&=\mathbb{E}_{t}\sum_{t}\beta_{i}^{t}u\left(c_{i,t},\ell_{i,t}\right)\\ 
+%&=\sum_{t}\beta_{i}^{t}\mathbb{E}_{t}\left[\frac{c_{i,t}^{1-\frac{1}{\sigma}}}{1-\frac{1}{\sigma}}-\varphi\frac{\ell_{i,t}^{1+\frac{1}{\varphi}}}{1+\frac{1}{\varphi}}\right], \label{eq:utility} 
+U_{i,t}=\sum_{t}\beta_{i}^{t}\mathbb{E}_{i,t} \frac{c_{i,t}^{1-\frac{1}{\sigma}}}{1-\frac{1}{\sigma}},\label{eq:utility}
+\end{align} 
+where the expectation is taken over idiosyncratic earnings risk, see the budget constraint (\ref{eq:budget_con}) below. There are no aggregate shocks, and, appealing to a law of large numbers, there is hence no aggregate uncertainty. I assume that flow utility is of the CRRA-form with $\sigma$ denoting the intertemporal elasticity of substitution.
+The discount factor $\beta$ varies across households, but is constant over time to the individual household. The variation in this parameter across the population is used to match the empirical wealth distribution, see \citet{krusell1998income}, \citet{krueger2016macroeconomics}, \citet{carroll2017distribution} for similar approaches. The special case with only two values of beta results in the patient/impatient household setup used in a variety of models. The heterogeneity in discount factors is meant to reflect not only subjective preferences but also characteristics such as age, education, gender and so forth which are absent in the household model. \\
+Households maximize utility subject to the budget constraint and the borrowing constraint: 
+\begin{gather}
+c_{i,t}+a_{i,t}= (1+r_{t}^{a}(a_{i,t-1})) a_{i,t-1} +  I_{i,t} -\tau^{I}\left(I_{i,t}\right)+T_{t} \label{eq:budget_con}  \\
+a_{t}\geq\underline{a} \label{eq:borrow_con} 
+\end{gather}
+The left hand side are expenditures: The household can spend on either consumption or save in real (end of period) assets $a_{i,t}$. The right hand side is current "cash on hand". This is composed of last periods asset stock plus real returns, $\left(1+r_{t}^{a}(a_{i,t-1})\right)a_{i,t-1}$ plus income minus income taxes. Finally $T_t$ denotes lump sum transfers to the household. These include both government transfers and dividends payed out from firms. The income tax function is progressive, and fitted to danish tax data. 
+Households are allowed to borrow up to the limit $underline{a}$, but are subject to additional interest $\kappa_{r^{a}}$ if in debt. $r_{t}^{a}(a_{i,t-1})$ is hence the relevant interest rate for a household with assets $a_{i,t-1}$ where $r_{t}^{a}(a_{i,t-1})=r_{t}^{a}$ if  $a_{i,t-1}\geq0$ and $r_{t}^{a}+\kappa_{r^{a}}$ if $a_{i,t-1}<0$.
+
+Income depends on employment status and idiosyncratic earnings risk $e_{i,t}$:   
+\begin{gather}
+I_{i,t}^{k}=\begin{cases}
+\begin{array}{c}
+w_{t} e_{i,t} , \\
+b e_{i,t},
+\end{array} & \begin{array}{c}
+k=N\\
+k=U
+\end{array}\end{cases}
+\label{eq:Inc}
+\end{gather}
+If the household is employed $w_t$ is received per unit of labor supplied. If the household is unemployed it receives a government funded benefit $b$. In both states income is assumed proportional to earnings risk $e$.\footnote{A similar assumption is used in \citet{mckay2016role}. In practice unemployment befits are indexed to wage growth, but usually with a lag. In Denmark this occurs through the \textit{satsregulering}, where public transfers are indexed to wage growth with a two year lag.} 
+
+
+%In addition, I follow \citet{auclert2018inequality} in including the incidence function $\gamma\left(e_{i,t},Y_{t}\right)$. This function captures that workers in different parts of the income distribution is affected differently over the cycle. This holds both for employment and wages, but for now I model only the wage dependency. Hence the function captures how the wages of a worker with earnings ability $e_i,t$ is affected when production $Y$ moves over the cycle. As detailed in section XXX I calibrate the function to the evidence from \citet{guvenen2017worker}. The function is normalized such that $\mathbb{E}_{t}\left[\gamma\left(e_{i,t},Y_{t}\right)e_{i,t}\right]=1$.   
+
+Section \ref{sec:Sol_method} describes the households problem in-depth and how to solve it, but I present the Euler equations here to provide intuition. Non-constrained households (i.e. households for which the credit constraint $a_{t}\geq\underline{a}$ does not bind) choose consumption in accordance with the Euler equations, dependent on whether they are currently employed or not:
+\begin{gather*}
+\left(c_{i,t}^{k=N}\right)^{-\frac{1}{\sigma}}=\beta\mathbb{E}_{i,t}R_{t+1}\left[\left(1-\delta\left(1-q_{t+1}\right)\right)\left(c_{i,t+1}^{k=N}\right)^{-\frac{1}{\sigma}}+\delta\left(1-q_{t+1}\right)\left(c_{i,t+1}^{k=U}\right)^{-\frac{1}{\sigma}}\right] \\
+\left(c_{i,t}^{k=U}\right)^{-\frac{1}{\sigma}}=\beta\mathbb{E}_{i,t}R_{t+1}\left[q_{t+1}\left(c_{i,t+1}^{k=N}\right)^{-\frac{1}{\sigma}}+(1-q_{t+1})\left(c_{i,t+1}^{k=U}\right)^{-\frac{1}{\sigma}}\right],
+\end{gather*}
+where $q,\delta^N$ denote respectively the probability of finding a job if unemployed, and the probability of being fired if employed. Abstracting from employment dynamics for a second ($q=0,\delta^N=0$) the equations reduce to the standard Euler equations. The main difference compared to standard NK models then lies in the expectational term taken over the earnings risk in (\ref{eq:Inc}). As utility is concave this generates precautionary savings as households buffer up on assets in the event that a bad state of earnings is realized in the future. Assuming $q>0,\delta^N>0$ adds unemployment risk to the households problem. This adds a second precautionary savings motive, as employed households save to ensure against potential future unemployment. Similarly, unemployed households save more than usual in the event that their unemployment spell is prolonged. This channel is endogenous over the cycle due to movements in the job finding rate $q$.  
+
+
+\subsection{Firms}
+\subsubsection*{Final good Firm.}
+I assume the presence of a representative firm which assembles intermediate goods $y_{j,t}$ into a final good $Y_t$ using CES technology:
+\begin{gather*}
+Y_{t}=\left(\int_{0}^{1}y_{j,t}^{\frac{\epsilon_{p}-1}{\epsilon_{p}}}dj\right)^{\frac{\epsilon_{p}}{\epsilon_{p}-1}},
+\end{gather*}
+where $\epsilon_{p}$ is the elasticity of substitution between intermediate goods. The representative firm minimizes its cost, and the resulting demand for $y_{j,t}$ is given by:
+\begin{gather}
+y_{j,t}=\left(\frac{p_{j,t}}{P_{t}}\right)^{-\epsilon_{p}}Y_{t} \label{eq:Inter_goods_demand}
+\end{gather}
+
+
+
+\subsubsection*{Intermediate goods firms.}
+There exists a continuum of firms who produces a variety of intermediate goods $y_{j,t}$. Firm $j$ produce using using capital $k_{j,t-1}$ and labor $n_{j,t}$ with Cobb-Douglas technology:
+\begin{gather}
+y_{j,t}=Z_{t}k_{j,t-1}^{\alpha}n_{j,t}^{\alpha}, \label{eq:Production_function}
+\end{gather}
+where $\alpha$ denotes the output elasticity of capital and $Z_t$ denotes total factor productivity (TFP). Each firm produces a slightly different good which gives rise to monopolistic competition. Thus firms maximize dividends taking into account the demand schedule in (\ref{eq:Inter_goods_demand}). As is defining in Keynesian models nominal rigidities are present, the primary one being rigid prices. I follow the more recent literature that uses Rotemberg pricing (\citet{rotemberg1982sticky}) instead of the more traditional Calvo pricing mechanism \citet{calvo1983staggered}. In particular, there is a quadratic cost associated with changing prices from the long run equilibrium value of gross inflation $\overline{\Pi}$:   
+\begin{gather*}
+\Phi^{P}\left(p_{j,t-1},p_{j,t}\right)=\frac{\kappa_{P}}{2}\left[\frac{p_{j,t}}{p_{j,t-1}}-\overline{\Pi}\right]^{2}Y_{t},
+\end{gather*}
+where the parameter $\kappa_{P}$ determines how large the adjustment cost is. Labor and capital are rented from labor and capital firms respectively at rates $r^N_t$ and $r^K_t$. Resulting dividends of the intermediate goods firms are given by:
+\begin{gather*}
+div_{j,t}=\frac{p_{j,t}}{P_{t}}y_{j,t}-r_{t}^{L}n_{j,t}-r_{t}^{K}k_{j,t-1}-\Phi^{P}\left(p_{j,t-1},p_{j,t}\right)
+\end{gather*}
+Let $mc_{t}$ denote the real marginal cost.\footnote{The marginal cost is defined as $mc_{t}\equiv\partial\Xi_{t}\left(y_{j,t}\right)/\partial y_{j,t}$ where $\Xi_{t}\left(y_{j,t}\right)=\min_{k_{j,t},n_{j,t},v_{j,t}}div_{j,t}$ subject to the production function (\ref{eq:Production_function}).}
+The first-order condition for price-setting yields the New-Keynesian Philips-curve:  
+\begin{gather}
+%\ln\left(1+\pi_{t}\right) = \kappa_{P}\left(mc_{t}-\frac{1}{\mu_{p}}\right)+\frac{1}{1+r_{t+1}}\left[\ln\left(1+\pi_{t+1}\right)\right]\frac{Y_{t+1}}{Y_{t}}
+(1-\epsilon_{p})+\epsilon_{p}mc_{t}-\kappa_{P}\left(\pi_{t}-\bar{\Pi}\right)\pi_{t}+\frac{\kappa_{P}}{1+r_{t+1}}\left(\pi_{t+1}-\bar{\Pi}\right)\pi_{t+1}\frac{Y_{t+1}}{Y_{t}}=0 \label{eq:NK_phillips}
+\end{gather}
+The first-order condition for labor and capital equates the rental rates with marginal products:
+\begin{gather}
+MPL_{t}=\left(1-\alpha\right)mc_{t}\frac{Y_{t}}{N_{t}}=r_{t}^{L} \label{eq:labor_demand} \\
+MPK_{t}=\alpha mc_{t}\frac{Y_{t}}{K_{t}}=r_{t}^{K} \label{eq:capital_demand} 
+\end{gather}
+
+
+
+
+
+\subsubsection*{Labor firms.}
+Intermediate goods firm hire labor from labor firms who acts as middlemen between households an intermediate goods firms. Labor firms post vacancies $v_{j,t}$ which are filled with probability $m_t$, in which case they pay the real wage rate $w_t$ to the matched household. Existing matches are destroyed at an exogenous rate $\delta^N$
+The value of a match to a labor firm is given by:
+\begin{align*}
+\mathcal{J}_{t}^{m}&=\left(r_{t}^{L}-w_{t}\right)+\frac{\left(1-\delta^{{N}}\right)}{1+r_{t+1}}\mathcal{J}_{t+1}^{m} \\
+&=\left(MPL_{t}-w_{t}\right)+\frac{\left(1-\delta^{{N}}\right)}{1+r_{t+1}}\mathcal{J}_{t+1}^{m}
+\end{align*}
+I assume a constant, linear vacancy posting cost $\kappa_{V}V_{t}$, such that the value of an unfilled vacancy is:
+\begin{gather*}
+\mathcal{J}_{t}^{V}=-\kappa_{V}+m_{t}\mathcal{J}_{t}^{m}
+\end{gather*}
+i.e. with the matching probability the value of a match is gained minus the the cost of posting one vacancy. 
+Free entry in the labor firm sector implies that the value of a vacancy $\mathcal{J}_{t}^{V}$ must be zero. Hence $\mathcal{J}_{t}^{m}=\frac{\kappa_{V}}{m_{t}}$. This implies that the number of open vacancies instantly jumps to ensure zero profits given changes in the value of a match. The implies labor demand schedule is:
+\begin{gather}
+\frac{\kappa_{V}}{m_{t}}=\left(MPL_{t}-w_{t}\right)+\frac{\left(1-\delta^{N}\right)}{1+r_{t+1}}\frac{\kappa_{V}}{m_{t+1}} \label{eq_labor_demand_sche}
+\end{gather}
+with resulting dividends $div_{t}^{L} = \left(r_{t}^{L}-w_{t}\right)N_{t}-\kappa_{V}V_{t}$.
+%The first-order condition shows that, conditional on a relatively rigid wage $w_t$, changes in the marginal product of labor is primarily absorbed by changes in the matching probability. Hence supply shock affect directly employment opportunities and not wages. 
+
+
+
+%where $MPL_{t}=\left(1-\alpha\right)\frac{Y_{t}}{N_{t}}mc_{t}$ is the marginal product of labor and $\mathcal{J}_{t}^{m}$ is the value of a worker-firm match. At the optimum, this equals the cost $\mathcal{J}_{t}^{m}=\frac{\kappa_{V}}{m_{t}}$. The restated first-order condition then states that the value of a match today equals the gain from getting an extra worker (the marginal product minus wage expenses) along with the discounted continuation value if the match is kept to the next period. This occurs with probability $1-\delta^{\text{L}}$. 
+
+\subsubsection*{Capital firms.}
+There is a representative capital firm which may create capital by investing units of the final goods in accordance with the law of motion:
+\begin{gather}
+K_{t}=\left(1-\delta^{K}\right)K_{t-1} + I_{t}, \label{eq:capital_accu}
+\end{gather}
+where $\delta^{K}$ denotes the deprecation rate of capital and $I_{t}$ denotes flow investment in capital. Adjusting the flow of investments is subject to adjustment costs $\phi_{I}\left(\frac{I_{t}}{I_{t-1}}\right)$, such that dividends/profits are given by:
+\begin{gather}
+div_{t}^{K}=r_{t}^{K}K_{t-1}-I_{t}\left(1+\phi_{I}\left(\frac{I_{t}}{I_{t-1}}\right)\right) \label{eq:capital_firms_profit}
+\end{gather}
+The function $\phi_{I}$ is assumed to be of the usual quadratic form:
+\begin{gather*}
+\phi_{I}\left(\frac{I_{t}}{I_{t-1}}\right)=\frac{\kappa_{I}}{2}\left(\frac{I_{t}}{I_{t-1}}-1\right)^{2},
+\end{gather*}
+where $\kappa_{I}$ measures the size of the adjustment costs.  
+The first-order condition for investment reflect standard Q theory, and is given by:
+\begin{gather*}
+1+\frac{I_{t}}{I_{t-1}}\phi_{I}'\left(\frac{I_{t}}{I_{t-1}}\right)+\phi_{I}\left(\frac{I_{t}}{I_{t-1}}\right)=Q_{t}+\frac{1}{1+r_{t+1}}\phi_{I}'\left(\frac{I_{t+1}}{I_{t}}\right)\left(\frac{I_{t+1}}{I_{t}}\right)^{2},
+\end{gather*}
+where $Q_t$ obeys:
+\begin{gather*}
+Q_{t}=\frac{1}{1+r_{t+1}}\left[r_{t+1}^{K}+Q_{t+1}\left(1-\delta\right)\right]
+\end{gather*}
+In steady state where $I_t=I_{t-1}=I$ and hence $\phi_{I}\left(\frac{I_{t}}{I_{t-1}}\right)=0$, $Q=1$ the price of capital $r^K$ equals the user-cost $r+\delta$. Outside the steady state investment and capital responds to changes in the price $r^K_t$ and the discount factor $r_{t+1}$, but adjustment costs ensure that the period-by-period changes in investment are reduced and spread out over the duration of the shock. Furthermore, since the adjustment cost is formulated in changes in investment and not capital, this can potentially produce hump-shaped responses for investment. 
+
+\subsubsection*{Aggregate Dividends.}
+Aggregate dividends, which are payed out to households who hold equity shares, are given by the sum of dividends from intermediate good firms and the capital firm net the fixed cost. 
+\begin{align*}
+div_{t}&=\int div_{j,t}dj+div_{t}^{K}+div_{t}^{L}  
+-\Phi^{F} \\
+&=
+Y_{t}-w_{t}N_{t}-\kappa_{V}V_{t}-I_{t}\left(1+\phi_{I}\left(\frac{I_{t}}{I_{t-1}}\right)\right)-\Phi^{P}\left(P_{t-1},P_{t}\right) - \Phi^{F}
+\end{align*}
+
+
+
+\subsection{Mutual Fund}
+Household assets are administered by a mutual fund, with the setup closely resembling that of \citet{auclert2020micro}. Household assets $A_t$ are invested in either government bonds $B_t$ or firm equity $e_{j,t}$ by a mutual investment fund (financial intermediary) and pays a collective return ${r}_{t+1}^{a}$ in the following period. Government bonds pays $r_{t+1}$ which is the rate set by the central bank.
+Firm equity shares are priced at $p_{j,t}^{e}$, and if a households in shares in a firm it also receives a dividend $div_{j,t+1}$ Thus the return to an equity share $e_{j,t}$ is $div_{j,t+1}+p^e_{j,t+1}$. The mutual fund solves the following maximization problem:
+\begin{gather*}
+V_{t}^{MF}\equiv\max_{e_{j,t},B_{t}}\int\left(div_{j,t+1}+p_{j,t+1}^{e}\right)e_{j,t}dj+\left(1+r_{t+1}\right)B_{t}-\left(1+r_{t+1}^{a}\right)A_{t} \\
+s.t. \\
+A_{t} = B_{t}+\int p_{j,t}^{e}e_{j,t}dj,
+\end{gather*}
+where the constraint states that total value of household assets must equal the value of government bonds plus the value of firm equity in each period. 
+The first-order conditions are standard no-arbitrage conditions: 
+\begin{gather}
+r_{t+1}^{a}=r_{t+1} \label{pG_FOC} \\
+1+r_{t+1}^{a}=\frac{p_{t+1}^{e}+div_{t+1}}{p_{t}^{e}} \label{Equity_FOC}
+\end{gather}
+In addition, since firms are symmetrical and equity shares sum to 1 we have:
+\begin{gather*}
+A_{t}=B_{t}+p_{t}^{e},
+\end{gather*}
+Furthermore, I assume that the central bank has nominal reverse which is net zero in supply. This follows the usual Paradigm for NK models in modeling the cashless limit of \citet{woodford1998doing}. Holding assets from the nominal stock in period $t$ pays the nominal interest rate $i_t$ set by the central bank. No arbitrage implies that the real return obtained by the households $1+r_{t+1}^{a}$ must equal $r_{t+1}$, where $r_{t+1}$ is given by the Fisher equation:
+\begin{gather*}
+\left(1+r_{t+1}\right)\left(1+\pi_{t+1}\right)=\left(1+i_{t}\right)
+\end{gather*}
+The above setup has a small mechanical nuisance: In the presence of an unexpected shock the no-arbitrage condition (\ref{Equity_FOC}) will fail, and the implication is that the mutual fund will have non-zero profits in the impact period. I assume that the profit (deficit) the fund obtains in this period alone is transferred to the government, such that the public extracts (covers) the potential profits (deficit). In all future periods the no-arbitrage condition holds and profits are zero.    
+
+% dividends discussion
+It is common to assume that dividends are payed out to households lump sum. Given incomplete markets the distribution of these dividends to households can be an important determinant for aggregate demand, see \citet{bilbiie2008limited}, \citet{broer2020new}, \citet{werning2015incomplete}. Hence the author must argue for the allocation rule chosen, though often somewhat arbitrarily constructed. The above formulation does so implicitly by assuming that holding equity shares provides dividends, such that the implicit distribution rule is that dividends received by a households is increasing in wealth. 
+
+
+
+\subsection{Labor Market}
+The labor market is a Diamond-Mortensen-Pissarides search and matching labor market.\footnote{\citet{diamond1982aggregate}, \citet{mortensen1982matching}, \citet{pissarides1985short}.} All households who are not employed at the start of a given period $t$ search for a job, such that the number of searchers $S_t$ is given by: 
+\begin{gather*}
+S_{t}=1-N_{t-1}\left(1-\delta^{N}\right),
+\end{gather*}
+i.e. the aggregate population minus workers who kept their job from the last period. Similarly, aggregate employment follows the law of motion:
+\begin{gather*}
+N_{t}=N_{t-1}\left(1-\delta^{N}\right)+M_{t},
+\end{gather*}
+where $M_{t}$ denotes the number of new matches made at the beginning of the period. The number of matches is determined by a matching function, whose function form attain from \citet{den2000job}:
+\begin{gather*} 
+M_{t}=\frac{V\cdot S}{\left(S^{\xi}+V^{\xi}\right)^{\frac{1}{\xi}}}       
+\end{gather*}
+The following definition holds relating the number of new matches, searchers, and vacancies:
+\begin{gather*}
+M_{t}=q_{t}S_{t}=V_{t}m_{t},
+\end{gather*}
+where $q_t$ and $m_t$ denote respectively the job finding rate (probability of finding a job) and the matching probability (probability of filling a vacancy). Defining $\theta_{t}=\frac{V_{t}}{S_{t}}$ as a measure of labor market tightness, these can be expressed as:
+\begin{gather*}
+q_{t}=\frac{\theta_{t}}{\left(1+\theta_{t}^{\xi}\right)^{\frac{1}{\xi}}} 
+\end{gather*}
+\begin{gather*}
+m_{t}=\frac{\theta^{-1}}{\left(1+\theta_{t}^{-\xi}\right)^{\frac{1}{\xi}}}
+\end{gather*}
+The functional form of the matching function ensure that these are well defined probabilities in the sense that $q_{t}\rightarrow0,m_{t}\rightarrow1$ as $\theta_{t}\rightarrow0$, and similarly $q_{t}\rightarrow1,m_{t}\rightarrow0$ for $\theta_{t}\rightarrow\infty$. 
+Unemployment is defined as the number of households without a job at the end of the period: 
+\begin{gather*}
+U_{t}=1-N_{t},  
+\end{gather*}
+and thus differs from the number of searchers by exactly the number of matches $M_t$ made in the period. Note that the matching friction embedded in the matching function ensures the presence of involuntary unemployment is equilibrium since full employment requires a job-finding rate of 1, which only occurs when $\theta_{t}\rightarrow\infty$, and hence is impossible in practice. 
+
+
+
+
+\subsection{Wage Formation}
+To close the labor market a model of wage formation is needed. It is common in the literature to assume that workers and firms engage in a Nash bargaining game over the matching surplus. The presence of matching frictions implies that a large bargaining set of wages exists (\citet{hall2005employment}). In general, any wage within this set could be the equilibrium bargaining wage under Nash bargaining. Given this indeterminacy - along with poor cyclical properties (see \citet{shimer2005cyclical}) - recent papers tend to calibrate the steady-state wage and verify that this lies within the bargaining set, and assume simple, ad-hoc wage rules that determine the wage response outside of steady-state (examples include \citet{gornemann2016doves}, \citet{mckay2016optimal}, \citet{den2018unemployment} and many more).
+In the baseline model I apply a wage rule of the form:
+\begin{gather*}
+%w_{t}=w^{ss}\left(\frac{Y_{t}/N_{t}}{Y_{t}^{ss}/N_{t}^{ss}}\right)^{\eta},
+w_{t}=w^{ss}\left(\frac{\theta_{t}}{\theta^{ss}}\right)^{\eta},
+\end{gather*}
+where $\theta$ measures labor market tightness, and $\eta$ is the elasticity of wages w.r.t market tightness. This simple ad hoc rule implies that as the labor market becomes more tight, reflecting that firms finds it harder to obtain matches given vacancy posting, an upwards pressure is put on wages. 
+
+
+Given that the wage rate is not generated from a Nash bargaining game it can potentially, if calibrated inappropriately, lie outside the bargaining set of solutions. This would imply that it would be suboptimal for either workers or firms to engage in matching, and hence the equations describing the labor market would be incorrect. The Nash bargaining set is characterized as follows. The lower limit of the set satisfies that workers are indifferent being employed and unemployed:
+\begin{gather*}
+%\int be_{i}\left(1-\tau\left(be_{i}\right)\right)di=\int\underline{w}\ell e_{i}\left(1-\tau\left(\underline{w}\ell e_{i}\right)\right)di
+\underline{w}e_{i,t} = be_{i,t} \\
+\Leftrightarrow \underline{w} = b 
+\end{gather*}
+%In the prescence of a linear tax system this solves to the usual lower bound $b=\underline{w}$, stating that 
+%which solves to $be_{i}=\underline{w}e_{i}\ell_{i}$, and $b=\underline{w}$ in steady state. 
+The upper limit of the set equals firms reservation wage. The reservation wage is the highest wage under which the firm would still find it profitable to operate. This implies that the value of a match must be zero when evaluated at the reservation wage. Hence, the upper limit of the set is given by $\overline{w} = MPL_{t}$.
+The complete bargaining set is given by $\left[b,J_{t}\right]$. I verify numerically, conditional on calibration (see section \ref{sec: Calibration}), that the wage is in the aggregate bargaining set at all times during simulations.  
+
+
+
+
+\subsection{Government Policy}
+The government raises taxes (income taxes and consumption VAT) which funds public consumption and unemployment benefits. Furthermore, it supplies bonds to households and pay interest rate $r$ on these. Let $G$ be public consumption and $B$ government bonds. The government's real budget constraint is given by:
+\begin{gather}
+C_{t} + \tau_{t}^{I}\left(w,N\right) + B_{t} \nonumber \\ 
+=G_{t}+\left(1-N_{t}\right)\int b\left(e^{i}\right)d\mathcal{D}_{t}^{e}+T_{t}+B_{t-1}\left(1+r_{t}\right) \label{eq:G_budget}
+\end{gather}
+The left hand side is revenue: It is composed of raised taxes, and the revenue that the supply of bonds generate. The term $T^{I}\left(w,N\right)$ constitutes aggregate income taxes given by:
+\begin{gather*}
+\tau_{t}^{I}=\int N_{t}\tau^{I}\left(w_{t}e^{i}\ell_{i}\right)+\left(1-N_{t}\right)\tau^{I}\left(b(e^{i})\right)d\mathcal{D}_{t},
+\end{gather*}
+The right-hand side are aggregate government expenses. It consists of public consumption, unemployment benefits, lump sum transfers to households and debt repayments plus interests. Transfers to households from the government are in steady-state distributed according to a rule which is monotone in earnings ability $e_{i,t}$. I calibrate the rule to best fit the pre- and post-tax income Gini coefficients of Denmark (0.44 and 0.25 respectively). Outside of steady-state transfers are distributed uniformly across households. 
+It is well known that the choice of financing public expenditures using either debt or taxes does not matter for economic outcomes under certain circumstances (Ricardian equivalence  - \citet{barro1974government}). This equivalence between debt and taxes applies in simple New-Keynesian models with representative, infinitely lived agents, but not in heterogeneous agent economics such as HANK models. Hence an argued choice must be made between letting debt or taxes take the adjustment in response to changes in the budget. Simpler models often opt for letting lump sum transfers/taxes balance the budget, whereas more advanced models use a combination by letting debt take the short run adjustment and taxes the long run adjustment. 
+In response to temporary shocks bonds $B_t$ takes the initial adjustment in the budget constraint, and government adjusts either public consumption or transfers to ensure non-explosive debt dynamics:\footnote{The initial idea to obtain fiscal balance in the long run was to let bonds adjust freely in response to the temporary shock, and afterwards conduct a shock to transfers the ensures long run fiscal balance. This is similar to \citet{hagedorn2019fiscal}, and aids the analysis in the sense that the short run dynamics can be analyzed with only small effects from public transfers. However, the solution applied (see section \ref{sec:SHADE_method}) does not abide to this procedure since explosive government debt implies equilibrium indeterminacy.} The rules are taken from \citet{mckay2016role} and given by:
+\begin{gather}
+T_{t}=T^{ss}-\gamma^{T}\ln\left(\frac{B_{t-1}}{B^{ss}}\right), \label{eq:T} \\
+G_{t}=G^{ss}-\gamma^{G}\ln\left(\frac{B_{t-1}}{B^{ss}}\right) \label{eq:G}
+\end{gather}
+For permanent shocks I let transfers adjust period-by-period. \\
+Monetary policy follows a Taylor rule which features interest rate smoothing but abstracts from specific output stabilization: 
+\begin{gather*}
+%i_{t}=\max\left\{0,r^{*}+\phi^{MP}\pi_{t}\right\},   
+%i_{t}=\max\left\{ 0,i^{*}+\phi^{MP}\pi_{t}\right\},
+i_{t}=i_{t-1}\rho^{MP}+\left(1-\rho^{MP}\right)\left(i^{*}+\phi^{MP}\pi_{t}\right),
+\end{gather*}
+
+%The budget constraint reveals an obvious choice which the government is faced with continuously: To fund consumption and benefit programs using either non-distortionary taxes (transfers) or borrowing. Under certain assumptions (infinite horizon households, complete markets etc) this issue is non-existent since the two sources of funding has equivalent effects. This is the Ricardian Equivalence theorem (RET) (\citet{barro1974government}). 
+
+
+%where $\phi^{P}$ measures the elasticity of the interest rate  w.r.t the price level $P_t$. In the long run $P_t=P^{ss}$ and the monetary authority implements the target interest rate $i^{*}$.
+%\begin{gather*}
+%i_{t}=\max\left\{0,r^{*}+\phi^{MP}\pi_{t}\right\},   
+%i_{t}=\max\left\{ 0,i^{*}+\left(\phi^{MP}-1\right)\pi_{t}+\mathbb{E}_{t}\pi_{t+1}\right\} ,
+%\end{gather*}
+%which combined with the Fisher equation $1+r_{t}=\frac{1+i_{t-1}}{1+\pi_{t}}$ pins the real interest rate. 
+
+
+
+
+
+
+\subsection{Equilibrium}
+A general equilibrium of the model is a collection of paths for prices $\left\{ r_{t},r_{t}^{k},w_{t},p_{t}^{e},P_{t}\right\} _{t\geq0}$, aggregate quantities $\left\{ Y_{t},A_{t},K_{t},N_{t},L_{t},P_{t},div_{t},S_{t},V_{t}\right\} _{t\geq0}$, household decision rules \\ $\left\{ c_{t}\left(r_{t}^{a},w_{t},P_{t},q_{t}\right),a_{t}\left(r_{t}^{a},w_{t},P_{t},q_{t}\right),h_{t}\left(r_{t}^{a},w_{t},P_{t},q_{t}\right)\right\} _{t\geq0}$, a distribution $\mathcal{D}_{t}$ of households over earnings, discount factors, employment states and assets, and government policies $\left\{ B_{t},G_{t},T_{t},b_{t}\right\}_{t\geq0}$ at every $t$ such that:
+\begin{enumerate}[(i)]
+\itemsep0em 
+  \item Households solve their dynamic programming problem by maximizing (\ref{eq:utility}) subject to (\ref{eq:budget_con}) and (\ref{eq:borrow_con}),
+  \item The distribution of households over earnings, discount factors and assets evolves in a manner consistent with optimal decision rules and the exogenous Markov chain of earnings risk and discount factors and the endogenous Markov chain of employment (described in-depth in section \ref{sec:Sol_method}),  
+  \item The Final goods firm behave according to (\ref{eq:Inter_goods_demand}), intermediate goods firms obey optimality conditions (\ref{eq:NK_phillips}), (\ref{eq:labor_demand}), (\ref{eq:capital_demand}), capital firms maximize (\ref{eq:capital_firms_profit}) subject to (\ref{eq:capital_accu}), and labor service firms follow (\ref{eq_labor_demand_sche}), 
+  \item The government satisfies its budget constraint (\ref{eq:G_budget}), 
+  \item All markets clear.
+\end{enumerate}
+There are 3 markets open in the economy that must clear. The market for assets clear when the stock of real household assets $A_t = \int a_{t}d\mathcal{D}_{t},$ equals the real value of government bonds plus firm equity: 
+\begin{gather*}
+A_{t} = B_{t} + p_{t}^{e}
+\end{gather*}
+The extensive margin of the labor market clears when the number of searchers finding jobs equals the number of open vacancies filled:
+\begin{gather*}
+S_{t}q_{t}=m_{t}V_{t},
+\end{gather*}
+Given the above, goods market equilibrium is implicitly imposed through Walras's law:
+\begin{gather*}
+Y_{t}=C_{t}+I_{t}+G_{t}+\kappa_{V}V_{t}+\Phi^{P}\left(p_{j,t-1},p_{j,t}\right)+\phi_{I}\left(\frac{I_{t}}{I_{t-1}}\right)I_{t}-\kappa_{r^{a}}\int_{\underline{a}}^{0}a_{i,t}d\mathcal{D}_{t}+\Phi^{F}
+\end{gather*}
+

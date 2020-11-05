@@ -1,0 +1,149 @@
+
+
+
+
+
+\section{Automatic Stabilizers in the Data}
+\label{chap:Emprirics}
+It is infeasible to model the entirety of the danish tax/transfer system. Thus, I will select a few, but important stabilizers based on their correlation with the business cycle in the data.
+
+\citet{cohen1999automatic}, 
+
+
+\subsection{Government Budget}
+In core macroeconomic models, the government's budget balance is often simple, thus containing only a few taxes and transfers. In reality it contains many posts, though it is dominated by a few large posts. Table \ref{GBB_components} presents the major posts of the Danish government budget balance along with their average share of GDP for the period 1971-2017.  
+
+
+\bgroup
+\def\arraystretch{1.2}
+\setlength{\tabcolsep}{1.2em} 
+\begin{table}[H]
+\tiny
+%\captionsetup{font=footnotesize}
+\caption{Components of Danish Government Budget Balance, 1971-2017} 
+\label{GBB_components}
+\centering
+\footnotesize
+\begin{threeparttable}
+\scriptsize 
+\makebox[\textwidth]{ 
+\begin{tabular}{lc  lc}
+\toprule
+\multicolumn{2}{c}{{Revenues}} & \multicolumn{2}{c}{Expenses} \\ 
+\cmidrule(lr){1-2} \cmidrule(lr){3-4} 
+ {Post}   & Avg. GDP Share (\%)  & Post & Avg. GDP Share (\%)    \\
+\cmidrule(lr){1-1} \cmidrule(lr){2-2} \cmidrule(lr){3-3} \cmidrule(lr){4-4} 
+Direct Taxes  &  27.5  & Unemployment Insurance & 1.88   \\
+- Income Taxes  &  21.2  &  Early Retirement & 1.03   \\
+- Labour Market Contribution  &  4.20  &   Leave Benefits & 0.08    \\
+- Corporate Taxes  &  2.15  &  Pensions & 12.9     \\
+- Pension + Capital Taxes  & 1.36  &  Transfers to private institutions & 0.79    \\
+- Vehicle  Weight Duty &  0.83 & Public expenses to foreign & 1.56    \\
+Indirect Taxes  &  16.4  & Net public transfers to Private Firms & 0.09   \\
+- VAT &  9.04 &  Subsidies & 2.07   \\
+- Excise Taxes &  4.54 &  Public Consumption & 24.8   \\
+- Real Estate Taxes &  1.19  & Public Investment & 3.23   \\
+- Vehicle registration tax &  1.12 &  &   \\
+- Tariffs &  0.25 &  &   \\
+Social Contributions & 1.89 &  & \\
+Public Revenues from foreign &  0.07  & &  \\
+Net Interest Revenue &  -2.06  & &  \\
+Public Reinvestment  &  2.83  &  &  \\
+Other Revenues  &  0.98  & &   \\
+\cmidrule(lr){1-2} \cmidrule(lr){3-4} 
+Total Revenues  &  48.4  & Total Expenses  &   47.6   \\                            
+\midrule[\heavyrulewidth]
+\end{tabular}
+}
+\end{threeparttable}
+\begin{tablenotes}[para]\footnotesize 
+\item {\it Based on quarterly data from the danish central banks MONA database. }      
+\end{tablenotes}
+\end{table}
+ 
+% tyd : Arbejdsløshedsunderstøttelse
+% tye : Efterløn og overgangsydelse
+% tyo : Orlovsydelse
+% typ : Pensioner
+% typi : Transfereringer til private institutioner 
+% tenou : Offentlig udgift til udland
+% tkon-tiov : Kapital transfereringer fra offentlig sektor, - Overskud af offentlige virksomheder 
+% sisub : Subsidier
+% pco : Offentligt forbrug, deflator
+% fco : Offentligt forbrug
+% pio : Offentlig investering, deflator
+% fio : Offentlige investeringer  
+
+
+% siaf : Indirekte skatter i alt 
+% sbid : Sociale bidrag
+% sd   : Direkte skatter i alt 
+% toi : Andre offentlige indtægter 
+% tenoi : Offentlig indtægt fra udland 
+% tion : Offentlig renteindtægt, netto 
+% iov : Offentlig reinvestering  
+
+
+The taxes and transfers chosen for the model should be the ones that act as important stabilizers over the cycle. In principle this could be just by picking the taxes/transfers with the largest elasticities w.r.t to output-gap. However, the impact of specific tax/transfers as stabilizers cannot be judged solely on this due to general equilibrium effects. A tax/transfer may correlate poorly with output-gap either because it actually stabilizers output, or because it stimulates the economy and thereby reduced its own character. Consider for instance a negative demand shock initially reduces output and employment. Transfers to unemployed goes up initially, but by reducing the negative income shock to the unemployed demand reduces less compared to a situation without unemployment insurance. This in turn reduces the decline in output and employment, thus reducing aggregate unemployment transfers in the general equilibrium.     
+% Basically reverse causality? or not really...
+To determine sensitivity to the Business cycle I follow the literature in estimating the elasticises of budget balance posts w.r.t to the cyclical part of GDP. This follows, among others, \citet{cohen1999automatic} and
+\citet{mourre2014adjusting}. This methodology is regularly applied by the 
+European Commission to calculate the cyclically-adjusted budget balance, which is used for fiscal surveillance in the EU.  
+%mourre2019semi
+
+Let $g$ denote a given post in the budget balance. Let $y$ denote nominal GDP, and $\bar{y}$ the GDP trend obtained by applying the Hodrick–Prescott filter. Assume that all variables are in logs such that $y_t - \bar{y}_{t}$ is the output-gap at time $t$. The sensitivity of a given budget balance post to the cycle can be estimated by OLS using the model: 
+\begin{gather*}
+g_{t}=\alpha_{0}+\alpha_{1}\left(y_{t}-\bar{y}_{t}\right)+\alpha_{2}\ln\bar{y}_{t}+\varepsilon_{t}.   
+\end{gather*}
+
+
+
+\bgroup
+\def\arraystretch{1.2}
+\setlength{\tabcolsep}{1.2em} 
+\begin{table}[H]
+\tiny
+%\captionsetup{font=footnotesize}
+\caption{Estimated Business Cycle Elasticises of the Danish Government Budget Balance} 
+\label{GBB_components}
+\centering
+\footnotesize
+\begin{threeparttable}
+\scriptsize 
+\makebox[\textwidth]{ 
+\begin{tabular}{lc  lc}
+\toprule
+\multicolumn{2}{c}{{Revenues}} & \multicolumn{2}{c}{Expenses} \\ 
+\cmidrule(lr){1-2} \cmidrule(lr){3-4} 
+ {Post}   & Elasticity  & Post & Elasticity    \\
+\cmidrule(lr){1-1} \cmidrule(lr){2-2} \cmidrule(lr){3-3} \cmidrule(lr){4-4} 
+Direct Taxes  &  27.5  & Unemployment Insurance & 1.88   \\
+- Income Taxes  &  21.2  &  Early Retirement & 1.03   \\
+- Labour Market Contribution  &  4.20  &   Leave Benefits & 0.08    \\
+- Corporate Taxes  &  2.15  &  Pensions & 12.9     \\
+- Pension + Capital Taxes  & 1.36  &  Transfers to private institutions & 0.79    \\
+- Vehicle  Weight Duty &  0.83 & Public expenses to foreign & 1.56    \\
+Indirect Taxes  &  16.4  & Net public transfers to Private Firms & 0.09   \\
+- VAT &  9.04 &  Subsidies & 2.07   \\
+- Excise Taxes &  4.54 &  Public Consumption & 24.8   \\
+- Real Estate Taxes &  1.19  & Public Investment & 3.23   \\
+- Vehicle registration tax &  1.12 &  &   \\
+- Tariffs &  0.25 &  &   \\
+Social Contributions & 1.89 &  & \\
+Public Revenues from foreign &  0.07  & &  \\
+Net Interest Revenue &  -2.06  & &  \\
+Public Reinvestment  &  2.83  &  &  \\
+Other Revenues  &  0.98  & &   \\
+\cmidrule(lr){1-2} \cmidrule(lr){3-4} 
+Total Revenues  &  48.4  & Total Expenses  &   47.6   \\                            
+\midrule[\heavyrulewidth]
+\end{tabular}
+}
+\end{threeparttable}
+\begin{tablenotes}[para]\footnotesize 
+\item {\it Based on quarterly data from the danish central banks MONA database. }      
+\end{tablenotes}
+\end{table}
+
+
+Main problem is simoultanity. Can it be avoided with SVAR? 
