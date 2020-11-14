@@ -1,4 +1,4 @@
-# Replication files for: An Enquiry into HANK Models With an Application to Unemployment Risk and Labor Market Dynamics}
+# Replication files for 2020 thesis An Enquiry into HANK Models
 
 Code that solves and analyzes the HANK model developed for my 2020 thesis in economics. 
 
