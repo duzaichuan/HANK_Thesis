@@ -1,0 +1,4304 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Thu Mar 12 08:53:07 2020
+
+@author: Nicolai
+"""
+import os
+import sys
+
+if os.name == 'posix':
+        os.chdir('/Users/nic/Dropbox/Thesis_Ideas/Dyn_Prog_SAM/sequence-jacobian-master_2')    
+else : 
+        os.chdir(os.path.dirname(os.path.abspath(__file__)))
+        #os.chdir('C:/Users/Nicolai/Dropbox/Thesis_Ideas/Dyn_Prog_SAM/sequence-jacobian-master_2')
+
+import numpy as np
+from numba import vectorize, njit, jit, prange, guvectorize, cuda  
+#from numba import float64 as nbfloat64
+ 
+
+import pandas as pd
+
+
+import utils
+from het_block import het
+from simple_block import simple
+import matplotlib.pyplot as plt
+import matplotlib.pylab as pylab
+from matplotlib import ticker
+#from interpolation import interp 
+#from interpolation.splines import extrap_options as xto
+
+plt.style.use('ggplot')
+#plt.style.use('bmh')
+#plt.style.use('fivethirtyeight')
+
+
+%config InlineBackend.figure_format = 'retina'
+
+from scipy.interpolate import interp2d
+from scipy.optimize import minimize 
+from solved_block import solved
+from scipy import optimize
+
+import pickle
+import scipy.interpolate  
+from scipy import stats
+#import ineqpy
+from scipy.ndimage.interpolation import shift
+
+
+params = {'legend.fontsize': 'small',
+          'figure.figsize': (7, 5),
+         'axes.labelsize': 'small',
+         'axes.titlesize':'small',
+         'xtick.labelsize':'small',
+         'ytick.labelsize':'small',
+         'figure.frameon' : 'True',
+         'axes.edgecolor' : 'black'}
+
+from tabulate import tabulate
+
+
+from scipy.stats import norm
+import jacobian as jac
+import nonlinear
+#import hank
+import determinacy as det
+
+from consav.misc import  nonlinspace 
+
+from statsmodels.nonparametric.kde import KDEUnivariate # weighted kernel density 
+
+from types import SimpleNamespace
+
+from consav import upperenvelope, runtools 
+runtools.write_numba_config(disable=0,threads=4)
+
+
+import FigUtils  
+
+from quantecon import lorenz_curve
+
+from Utils2 import *
+
+#import seaborn as sns
+#sns.set()
+
+'''Part 1: HA block'''
+@het(exogenous='Pi', policy=['a'], backward=['EVa'])
+def EGMhousehold( EVa_p, Pi_p, Pi_ern, a_grid, Pi_seed, rstar, sBorrow, P, hss, kappa, ssN, h_con,
+                 e_grid,pi_e, pi_ern, w, ra, beta, eis, q, N, N_, destr, destrO, b, Benefit_type, T_dist, pi_beta, wss,
+                 Tss, Ttd, Tuni, ssAvgInc, VAT,  nPoints, cs_avg, ttd_inf, frisch, ssflag=False):
+    """Single backward iteration step using endogenous gridpoint method for households with separable CRRA utility."""
+
+
+    Eq = q 
+    x = a_grid >= 0
+    x = x.astype(int)
+    R = 1 + ra * x + (1- x) * (ra + kappa)    
+    
+    nBeta = nPoints[0]
+    ne = nPoints[1]
+    nA = nPoints[2]
+    nN = 2
+    
+    e_grid_alt = e_grid
+    #h_con = True 
+        
+    sol = {'N' : {}, 'S' : {}} # create dict containing vars for each employment state 
+    
+    # reshape some input
+    EVa_p  =                 np.reshape(EVa_p, (nBeta, ne, nN, nA))
+    U_inc, _  = Unemp_benefit(Benefit_type, b, e_grid, pi_ern, ne, wss) 
+    
+
+    
+    T =  transfers(pi_ern, Tss, e_grid, T_dist)
+
+    Ttd_ = transfers_td_e(pi_ern, Ttd, e_grid)
+    
+    T_agg =  np.broadcast_to(T[np.newaxis, :, np.newaxis] + Ttd_[np.newaxis, :, np.newaxis] + Tuni , (nBeta,ne, nA)) 
+    
+    # u'c(z_t, a_t) 
+    sol['N']['uc_nextgrid']  = np.ones([nBeta, ne, nA]) * np.nan
+    sol['S']['uc_nextgrid']  = np.ones([nBeta, ne, nA]) * np.nan
+    sol['N']['tInc']         = np.ones([nBeta, ne, nA]) * np.nan
+    sol['S']['tInc']         = np.ones([nBeta, ne, nA]) * np.nan
+
+
+    a_grid_org = a_grid
+    dN = N_ / ssN
+    dU = (1-N_) / (1-ssN)
+    
+    for j in range(nBeta):
+        sol['N']['uc_nextgrid'][j,:,:]  =  (beta[j] * Pi_ern) @ EVa_p[j,:,0, :] 
+        sol['S']['uc_nextgrid'][j,:,:]  =  (beta[j] * Pi_ern) @ EVa_p[j,:,1, :] 
+            
+    for h in sol:    
+        if h == 'N':
+            a_grid = a_grid_org 
+        if h == 'S':
+            a_grid = a_grid_org 
+            
+        sol[h]['c_nextgrid'] = inv_mu(sol[h]['uc_nextgrid'], eis)
+        if h == 'N':
+            tax_IN  = avgTaxf(w   * e_grid, ssAvgInc, cs_avg) 
+            sol[h]['tInc']  = np.broadcast_to(tax_IN[np.newaxis, :, np.newaxis], (nBeta,ne, nA))
+            sol[h]['I']   =   (1 - sol[h]['tInc'])  * w   * e_grid[np.newaxis, :, np.newaxis] * dN + T_agg
+        if h == 'S': 
+            tax_IS  = avgTaxf(U_inc, ssAvgInc, cs_avg) 
+            sol[h]['tInc']  = np.broadcast_to(tax_IS[np.newaxis, :, np.newaxis], (nBeta,ne, nA))
+            sol[h]['I']   =   (1 - sol[h]['tInc'])  * U_inc[np.newaxis,:, np.newaxis]  * dU  + T_agg
+
+        # interpolate for each beta 
+        sol[h]['c'] =  np.empty([nBeta, ne, nA])  
+        
+
+        for j in range(nBeta):
+            lhs = sol[h]['c_nextgrid'][j,:,:] * (1+VAT) + a_grid[np.newaxis, :]  - sol[h]['I'][j,:,:]
+            rhs = R * a_grid         
+            sol[h]['c'][j,:,:]  =     utils.interpolate_y(lhs,  rhs, sol[h]['c_nextgrid'][j,:,:])
+      
+        sol[h]['a'] = R * a_grid[np.newaxis, np.newaxis, :]   + sol[h]['I'] - sol[h]['c']  * (1+VAT) 
+        
+        # check borrowing constraint 
+        sol[h]['a'], sol[h]['c'] = constr(sol[h]['a'], sol[h]['c'], a_grid[0], 'a', R, a_grid, VAT, sol[h]['I'])
+        
+   
+    # unpack from dict and aggregate   
+    cN  =  np.reshape(sol['N']['c'] , (ne*nBeta, nA))  
+    cS  =  np.reshape(sol['S']['c'] , (ne*nBeta, nA)) 
+    aN  =  np.reshape(sol['N']['a'] , (ne*nBeta, nA))  
+    aS  =  np.reshape(sol['S']['a'] , (ne*nBeta, nA)) 
+
+    
+    dN = N / ssN
+    dU = (1-N) / (1-ssN)
+    
+    IncN  = np.reshape(sol['N']['I'], (ne*nBeta, nA))        
+    IncS  = np.reshape(sol['S']['I'], (ne*nBeta, nA))        
+    IncNpretax  = np.reshape(sol['N']['I']    + sol['N']['tInc']  * w * e_grid[np.newaxis, :, np.newaxis] , (ne*nBeta, nA))   
+    IncSpretax  = np.reshape(sol['S']['I']    + sol['S']['tInc']  * U_inc[np.newaxis, :, np.newaxis] , (ne*nBeta, nA))   
+     
+    Ntaxes = sol['N']['tInc']  * w   * e_grid[np.newaxis, :, np.newaxis]
+    Ntaxes =  np.reshape(np.broadcast_to(Ntaxes, (nBeta,ne, nA)), (ne*nBeta, nA))     
+    Staxes = np.reshape(sol['S']['tInc']  * U_inc[np.newaxis, :, np.newaxis]  , (ne*nBeta, nA))   
+
+    
+    mu_N = cN ** (-1 / eis)
+    mu_S = cS ** (-1 / eis)
+    EnVa =  R[np.newaxis, :] *  (destr * (1-Eq)     * mu_S   + (1 - destr * (1-Eq)) * mu_N)
+    EuVa =  R[np.newaxis, :] *  ((1-Eq* (1-destrO)) * mu_S   + Eq * (1-destrO)      * mu_N) 
+        
+    Incagg = N * IncN + (1-N) * IncS
+
+    # Aggregate 
+    EVa =   np.reshape( np.stack((EnVa, EuVa), axis=-2), (ne*nBeta*nN, nA)) 
+    
+    # a =  np.reshape( np.stack((aN * dN, aS * dU), axis=-2), (ne*nBeta*nN, nA)) 
+    # c = np.reshape( np.stack((cN* dN, cS* dU), axis=-2), (ne*nBeta*nN, nA)) 
+    
+    a =  np.reshape( np.stack((aN , aS ), axis=-2), (ne*nBeta*nN, nA)) 
+    c = np.reshape( np.stack((cN, cS), axis=-2), (ne*nBeta*nN, nA)) 
+    
+    UincAgg = np.reshape(np.broadcast_to( U_inc[np.newaxis, :, np.newaxis], (nBeta,ne, nA)), (ne*nBeta, nA)) 
+        
+
+    zeromat = np.zeros([ne*nBeta, nA])
+    
+
+    tInc = np.reshape( np.stack((Ntaxes * dN, dU * Staxes), axis=-2), (ne*nBeta*nN, nA)) 
+    UincAgg =np.reshape( np.stack((zeromat,  UincAgg), axis=-2), (ne*nBeta*nN, nA)) 
+    
+    Inc = np.reshape( np.stack((IncN * dN, IncS* dU), axis=-2), (ne*nBeta*nN, nA)) 
+    IncN = np.reshape( np.stack((IncN , zeromat), axis=-2), (ne*nBeta*nN, nA)) 
+    IncS = np.reshape( np.stack((zeromat, IncS), axis=-2), (ne*nBeta*nN, nA)) 
+    
+    #print(N)
+    #print(dU)
+    
+    # ctd = np.reshape( np.stack((cN* N + cS* (1-N), cN* N + cS* (1-N) ), axis=-2), (ne*nBeta*nN, nA)) 
+    # atd = np.reshape( np.stack((aN* N + aS* (1-N) , aN* N + aS* (1-N) ), axis=-2), (ne*nBeta*nN, nA)) 
+    ctd = np.reshape( np.stack((cN* dN, cS * dU ), axis=-2), (ne*nBeta*nN, nA)) 
+    atd = np.reshape( np.stack((aN ,  aS), axis=-2), (ne*nBeta*nN, nA)) 
+        
+    cN = np.reshape( np.stack((cN , zeromat ), axis=-2), (ne*nBeta*nN, nA)) 
+    cS = np.reshape( np.stack((zeromat , cS ), axis=-2), (ne*nBeta*nN, nA)) 
+    aN = np.reshape( np.stack((aN , zeromat ), axis=-2), (ne*nBeta*nN, nA)) 
+    aS = np.reshape( np.stack((zeromat , aS ), axis=-2), (ne*nBeta*nN, nA)) 
+
+    taxN = np.reshape( np.stack((Ntaxes , zeromat ), axis=-2), (ne*nBeta*nN, nA))  
+    taxS = np.reshape( np.stack((zeromat , Staxes ), axis=-2), (ne*nBeta*nN, nA)) 
+
+    a_debt = np.reshape(np.broadcast_to( (1-x) * a_grid[np.newaxis, np.newaxis, :], (nBeta,ne, nA)), (ne*nBeta, nA)) 
+    
+    
+    a_debtN = np.reshape( np.stack(( a_debt ,zeromat ), axis=-2), (ne*nBeta*nN, nA)) 
+    a_debtS = np.reshape( np.stack((zeromat, a_debt ), axis=-2), (ne*nBeta*nN, nA)) 
+    a_debt = np.reshape( np.stack((dN * a_debt ,dU * a_debt ), axis=-2), (ne*nBeta*nN, nA)) 
+    
+    return EVa, a, c, tInc, UincAgg, Inc, cN, cS, aN, aS, ctd, atd, taxN, taxS, a_debt, a_debtN, a_debtS, IncN, IncS
+
+
+#@njit
+def int_loop(c_nextgrid, h_nextgrid, nBeta, VAT, a_grid, I, R, c, h_empt, h):
+    rhs = R * a_grid
+    for j in range(nBeta):
+        lhs = c_nextgrid[j,:,:] * (1+VAT) + a_grid - I[j,:,:]
+
+        c[j,:,:]  =     interp(lhs,  rhs, c_nextgrid[j,:,:], xto.LINEAR)
+        if h == 'N':
+            h_empt[j,:,:]  =     interp(lhs,  rhs, h_nextgrid[j,:,:], xto.LINEAR)    
+
+    return c, h_empt
+
+    
+
+# apply constraint on lower bound 
+def constr(a, c, lb, var, R, a_grid, VAT, I):
+    """x is a numpy array, lower bound lb is a scalar"""
+    m = a + c * (1+VAT)  
+    a_min = lb 
+    c_con = np.minimum( m - a_min, c * (1+VAT)) / (1+VAT)
+    
+    Wealth = R * a_grid
+    m_new = I + Wealth[np.newaxis, np.newaxis, :]
+    a_con = m_new - c_con * (1+VAT) 
+
+    return a_con, c_con
+
+
+@njit
+def UpperEnvlocal(w, cons, a_grid, m_grid, eis, VAT, h, vphi):
+    
+
+    m = a_grid  + cons * (1+VAT) 
+    
+    nm = m_grid.size 
+    nA = a_grid.size 
+    
+    v = np.ones(nm) * (-1E+8)  
+    c = np.ones(nm) * np.nan      
+    
+    
+    # if grid point is less than min of endo. grid
+    iconst_min = np.nonzero(m_grid <= m[0])
+    c[iconst_min] = m_grid[iconst_min] / (1+VAT)
+    v[iconst_min] = inst_util(c[iconst_min], eis, h, vphi) + w[0]
+
+    # if grid point is larger than max of endo. grid   
+    iconst_max = np.nonzero(m_grid > max(m))
+    con_mmax   = np.nonzero(m >= max(m))
+    c[iconst_max] = cons[con_mmax]
+    v[iconst_max] = inst_util(c[iconst_max], eis, h, vphi) + w[con_mmax]
+    
+    
+ 
+    
+    for i in range(nA-1):                
+        for j in  range(nm):
+                if  m[i] < m_grid[j] <= m[i+1]:
+                     
+                    c_guess = cons[i] + (cons[i+1]-cons[i]) * (m_grid[j]-m[i]) / (m[i+1]-m[i])
+                    aij = m_grid[j] - c_guess * (1+VAT)
+                    v_guess = inst_util(c_guess, eis, h, vphi) + w[i] + (w[i+1] - w[i]) * (aij - a_grid[i]) / (a_grid[i+1]-a_grid[i])
+                    
+                    
+                    if c_guess < 1E-8:
+                       c_guess = 1E-8 
+                       v_guess =  -1E+8
+                       
+                    if v_guess > v[j]:
+                        v[j] =  v_guess
+                        c[j] =  c_guess
+                        
+    w_new = v - inst_util(c, eis, h, vphi)
+                    
+    return c, w_new 
+
+
+
+@njit(parallel=True)
+def UpperEnvlocal_compute(W_candidate, c_candidate, a_grid, m_grid, eis, VAT, h, vphi):
+
+    nA     = a_grid.size 
+    numm   = m_grid.size  
+    nBeta  = W_candidate[:,0,0].size
+    ne     = W_candidate[0,:,0].size
+    
+    c_mgrid = np.ones((nBeta, ne, numm))  * np.nan 
+    W_mgrid = np.ones((nBeta, ne, numm))  * np.nan  
+    #c = np.ones((nBeta, ne, nA)) * np.nan 
+    #W = np.ones((nBeta, ne, nA)) * np.nan 
+    
+    for j in prange(nBeta):
+        for i in prange(ne):           
+            c_mgrid[j,i,:], W_mgrid[j,i,:] = UpperEnvlocal(W_candidate[j,i,:], c_candidate[j,i,:],  a_grid, m_grid, eis, VAT, h, vphi) 
+            
+            
+
+               
+
+    return c_mgrid, W_mgrid
+
+
+
+@njit   
+def inst_util(c, eis, h, vphi):
+    """Return optimal c, n as function of u'(c) given parameters"""
+    if h == 'S'  or h == 'N' : 
+        utility = c**(1-1/eis)/(1-1/eis) - vphi
+    else :
+        utility = c**(1-1/eis)/(1-1/eis)    
+    return utility
+
+@njit
+def util(c, eis):
+    """Return optimal c, n as function of u'(c) given parameters"""
+    utility = c**(1-1/eis)/(1-1/eis) 
+    return utility
+
+
+#@njit    
+def cn(uc, w, eis, frisch, vphi, e_grid_broad, tax_broad, VAT, nBeta, ne, nA, h_con, ssflag, ssc):
+    """Return optimal c, n as function of u'(c) given parameters"""
+    if h_con:
+        h_mat = np.ones([nBeta, ne, nA])
+    else:
+        if ssflag:
+            h_mat = (uc * w * e_grid_broad * (1-tax_broad**0.75)  / (vphi * (1+VAT))) ** frisch
+        else:
+
+            h_mat = (ssc * w * e_grid_broad * (1-tax_broad**0.75)  / (vphi * (1+VAT))) ** frisch
+
+    return uc ** (-eis), h_mat
+
+
+
+@njit(fastmath=True)
+def mu(c, eis):
+    """Return optimal c, n as function of u'(c) given parameters"""
+    return c ** (-1 / eis)
+
+
+@njit(fastmath=True)
+def cut(c, eis):
+    """Return optimal c, n as function of u'(c) given parameters"""
+    return c**(1-1/eis)/(1-1/eis)
+
+
+@njit
+def inv_mu(uc, eis):
+    """Return optimal c, n as function of u'(c) given parameters"""
+    return uc ** (-eis) 
+
+
+ 
+def mTaxf(I,w , e_grid , T, N):
+    """Return marginal tax rate as function of income"""
+    #Avg_inc =  w*e_grid*n_scale*N + b*e_grid*n_scale*(1-N)  # average steady state income 
+    Avg_inc =  w * N + b*(1-N)  # average steady state income 
+    inc_pos = I / Avg_inc # relative income 
+    mTax = cs_marg(inc_pos)
+    return mTax  
+
+ 
+def avgTaxf(I, ssAvgInc, cs_avg):
+    """Return avgerage tax rate as function of income"""
+    inc_pos = I / ssAvgInc # relative income 
+    avgTax = cs_avg(inc_pos)
+    #avgTax = 0.45 * I
+    return avgTax  
+
+
+#@vectorize
+def solve_uc_trans(w, a_zero, eis, frisch, vphi, uc_seed, e_grid_broad, tax_broad, VAT, nBeta, ne, nA, I_T, ssAvgInc, cs_avg, a_R):
+    """Solve for optimal uc given in log uc space.
+
+    max_{c, n} c**(1-1/eis) + vphi*n**(1+1/frisch) s.t. c = w*n + T
+    """
+    log_uc = np.log(uc_seed)    
+
+    for i in range(40):
+        ne, ne_p, _, _ = netexp(log_uc, w, a_zero, eis, frisch, vphi, e_grid_broad, tax_broad, VAT, nBeta, ne, nA, I_T, ssAvgInc, cs_avg, a_R)
+        if utils.within_tolerance_1d(ne, 1E-11): #abs(ne) < 1E-9:
+            _, _, c, n = netexp(log_uc, w, a_zero, eis, frisch, vphi, e_grid_broad, tax_broad, VAT, nBeta, ne, nA, I_T, ssAvgInc, cs_avg, a_R)
+            break
+        else:
+            log_uc -= ne / ne_p
+    else:
+        raise ValueError("Cannot solve constrained household's problem: No convergence after 30 iterations!")
+ 
+    return c, n
+
+
+#@njit
+def netexp(log_uc, w, a_zero, eis, frisch, vphi, e_grid_broad, tax_broad, VAT, nBeta, ne, nA, I_T, ssAvgInc, cs_avg, a_R):
+    """Return net expenditure as a function of log uc and its derivative."""
+
+    c, n = cn(np.exp(log_uc), w, eis, frisch, vphi, e_grid_broad, tax_broad, VAT, nBeta, ne, nA)
+    Tax = avgTaxf(w * n * e_grid_broad, ssAvgInc, cs_avg) 
+
+    ne = (c * (1+VAT) + a_zero) - ((1-Tax) * w * n * e_grid_broad + I_T + a_R)
+
+    # c and n have elasticities of -eis and frisch wrt log u'(c)
+    c_loguc = -eis * c
+    n_loguc = frisch * n
+    netexp_loguc =  c_loguc - ( (1-Tax) * w * e_grid_broad * n_loguc / ((1+VAT)))
+
+    return ne, netexp_loguc, c, n
+
+
+
+def transfers(pi_e, Div, e_grid, dist):    
+
+    ne = len(e_grid)
+    e = np.arange(1,ne+1)
+    #div = Div * (e**dist * np.flip(e)**(1-dist) )/ np.sum(pi_e * (e**dist * np.flip(e)**(1-dist) ))   
+    
+    x = (e**dist  ) 
+    div = Div *  x / np.sum(pi_e * x ) 
+
+    return div
+ 
+# =============================================================================
+# def transfers_td(pi_beta, Div, beta):
+#     #beta_lvl = np.arange(len(beta))**(10*pi_beta[-1]) 
+#     #div = Div / np.sum(pi_beta * beta_lvl) * beta_lvl
+#     div = np.empty(len(beta))
+#     div[:] = 0
+#     div[-1] = Div
+#     return div
+# =============================================================================
+
+# def transfers_td(ttd_inf, Div, a_grid):
+#     #beta_lvl = np.arange(len(beta))**(10*pi_beta[-1]) 
+#     #div = Div / np.sum(pi_beta * beta_lvl) * beta_lvl
+    
+#     p75  = ttd_inf['p75']
+#     D    = np.sum(ttd_inf['ss_dist'], axis = 0 )
+    
+    
+#     above_75th = np.nonzero(a_grid > p75)
+    
+#     div = np.empty(len(a_grid))
+#     div[:] = 0
+#     div[above_75th] = Div / np.sum(D[above_75th] ) 
+    
+#     return div
+
+
+def transfers_td_e(pi_e, Div, e_grid):
+    T = Div  * e_grid / np.sum(pi_e * e_grid)
+    return T
+
+
+def res_calib_2(x, *args):
+    
+    beta_mid, beta_var, beta_disp, vphi, kappa  = x
+    
+    # (EnVa, EuVa, Pi, Pi_ern, a_grid, pi_e, 
+    #     e_grid, pi_ern, w, ra, eis,
+    #     q, N, destr, U_inc, T_dist, 
+    #     div, lumpsum_T_init, ssAvgInc, VAT, pi,  
+    #     nPoints, cs_avg, nBeta, dist_type, B, K, 
+    #     beta_max, ttd_inf, p, tdiv, Tss, frisch, 
+    #     Tax_N, beta_var, beta_disp, a_lb, b, Benefit_type, agg_C, Tax_S) = args
+    
+    args_dict = args[0]
+
+    beta, pi_beta, Pi_beta = beta_dist(args_dict['nBeta'], beta_mid, beta_var, beta_disp, args_dict['dist_type'] )
+
+    Pi   =  np.kron(np.kron(Pi_beta, args_dict['Pi_ern']), args_dict['Pi_N'] )
+    pi_e =  np.kron(np.kron(pi_beta, args_dict['pi_ern']),args_dict['pi_N'])
+    Pi_seed = pi_e 
+    
+    penalty_var = 0 
+    if beta_var < 0.00001:
+        beta_var = 0.00005
+        penalty_var += 1 + abs(beta_var)
+        
+    if vphi < 0:
+        vphi = 0.05
+
+    penalty = 0 
+    if max(beta) > args_dict['beta_max'] - 0.0005:
+        beta_mid = args_dict['beta_max'] - beta_var - 0.0005
+        penalty += abs(1+x[0]+x[1])
+
+    if min(beta) < 0.2:
+        beta_mid = 0.2 + beta_var + 0.0001
+        penalty += abs(1+x[0]+x[1])
+
+    beta, pi_beta, Pi_beta = beta_dist(args_dict['nBeta'], beta_mid, beta_var, beta_disp, args_dict['dist_type'] )
+    Pi   =  np.kron(np.kron(Pi_beta, args_dict['Pi_ern']), args_dict['Pi_N'] )
+    pi_e =  np.kron(np.kron(pi_beta, args_dict['pi_ern']),args_dict['pi_N'])
+    Pi_seed = pi_e 
+
+    print('betas', beta_mid, beta_var, beta_disp )
+    print(max(beta))
+    print('Labor', vphi )
+    print('kappa', kappa )
+    
+    
+    args_dict.update({  'beta' : beta, 'pi_beta' : pi_beta, 'Pi_beta' : Pi_beta, 'Pi' : Pi, 'pi_e' : pi_e, 'vphi' : vphi, 'kappa' : kappa})
+                      
+    
+    # out =   EGMhousehold.ss(EnVa = EnVa, EuVa = EuVa, Pi = Pi, Pi_ern = Pi_ern, a_grid = a_grid, Pi_seed =  pi_e, e_grid = e_grid, 
+    #                  pi_e = pi_e, pi_ern = pi_ern, w = w  , ra = ra, beta = beta, eis = eis,
+    #                  q = q, N = N, destr = destr, b = b, Benefit_type = Benefit_type, T_dist = T_dist, pi_beta = pi_beta,
+    #                        Tss = Tss, Ttd = 0, Tuni = 0, ssAvgInc = ssAvgInc, VAT = VAT,  
+    #                        nPoints = nPoints,  cs_avg = cs_avg, ttd_inf = ttd_inf, tdiv = tdiv, frisch = frisch, vphi = vphi, ssflag=True)  
+    out =   EGMhousehold.ss(**args_dict)        
+        
+    sBot, sMiddle, sTop, s10, sborrow_con, share_borrow = IneqStat(out, args_dict['nPoints'], args_dict['a_lb'])
+    # top 10%: 50% of wealth
+    # middle 40% : 45 %
+    # bottom 50% : 5% 
+
+    taxes = out['C'] - args_dict['Agg_C'] 
+    
+    # targets
+    if args_dict['a_grid'][0] < 0:
+        target_bot    = 0
+        target_neg  = 0.15
+    else:
+        target_bot    = 0
+        target_middle = 0.1
+       
+    #sc_neg = np.nonzero(out['a'] < 0)
+    #share_borrow = 100 * sum(out['D'][sc_neg] )   
+       
+    #objective_func = np.array([out['A'] - B, out['SU'] - S, sMiddle - 0.45] )
+    #objective_func =    abs(out['A'] - ( args_dict['p'] + args_dict['B']) + penalty)   +  ((sBot- 0.05 + penalty + penalty_var)) +  (sMiddle - 0.45)**2 + 4 * abs(((sborrow_con - 0.1) +  penalty_var)) + abs(out['NS'] -1) + abs(taxes  )  
+    objective_func =    abs(out['A'] - ( args_dict['p'] + args_dict['B']) + penalty)   +  abs(sBot- target_bot + penalty + penalty_var) +  abs(target_neg - share_borrow +   penalty_var) + abs(out['NS'] -1) 
+
+    #print('Obj',objective_func)
+    print('A-B', ((out['A'] - (args_dict['p'] + args_dict['B']))  ), 'Middle s', ((sMiddle - 0.45)), 'Bottom',((sBot- target_bot )), 'neg',target_neg - share_borrow , 'labor', out['NS'] -1)
+
+    
+    return objective_func
+
+
+def res_calib_2_root(x, *args):
+    
+    beta_mid, beta_var, beta_disp  = x
+ 
+    args_dict = args[0]
+
+    beta, pi_beta, Pi_beta = beta_dist(args_dict['nBeta'], beta_mid, args_dict['beta_var'] , args_dict['beta_disp'] , args_dict['dist_type'] )
+    Pi   =  np.kron(Pi_beta, args_dict['Pi_ern'])
+    pi_e =  np.kron(pi_beta, args_dict['pi_ern'])    
+    
+    penalty_var = 0 
+    if beta_var < 0.00001:
+        beta_var = 0.00005
+        beta, pi_beta, Pi_beta = beta_dist(nBeta, beta_mid, beta_var, beta_disp, dist_type )
+        Pi   =  np.kron(Pi_beta, Pi_ern)
+        pi_e =  np.kron(pi_beta, pi_ern)   
+        penalty_var += 1 + abs(beta_var)
+    
+    beta, pi_beta, Pi_beta = beta_dist(nBeta, beta_mid, beta_var, beta_disp, dist_type )
+    Pi   =  np.kron(Pi_beta, Pi_ern)
+    pi_e =  np.kron(pi_beta, pi_ern)
+     
+ 
+
+
+
+    penalty = 0 
+    if max(beta) > beta_max:
+        beta_mid = beta_max - beta_var - 0.0001
+
+        beta, pi_beta, Pi_beta = beta_dist(nBeta, beta_mid, beta_var, beta_disp, dist_type )
+        Pi   =  np.kron(Pi_beta, Pi_ern)
+        pi_e =  np.kron(pi_beta, pi_ern)  
+        penalty += abs(1+x[0]+x[1])
+
+
+    if min(beta) < 0.2:
+        beta_mid = 0.2 + beta_var + 0.0001
+
+        beta, pi_beta, Pi_beta = beta_dist(nBeta, beta_mid, beta_var, beta_disp, dist_type )
+        Pi   =  np.kron(Pi_beta, Pi_ern)
+        pi_e =  np.kron(pi_beta, pi_ern)  
+        penalty += abs(1+x[0]+x[1])
+
+
+    print(beta_mid, beta_var, beta_disp )
+
+        
+    out =   EGMhousehold.ss(EnVa = EnVa, EuVa = EuVa, Pi = Pi, Pi_ern = Pi_ern, a_grid = a_grid, Pi_seed =  pi_e, e_grid = e_grid, 
+                     pi_e = pi_e, pi_ern = pi_ern, w = w  , ra = ra, beta = beta, eis = eis,
+                     q = q, N = N, destr = destr, b = b, T_dist = T_dist, pi_beta = pi_beta, 
+                           Tss = Tss, Ttd = 0, Tuni = 0, ssAvgInc = ssAvgInc, VAT = VAT,  
+                           nPoints = nPoints,  cs_avg = cs_avg, ttd_inf = ttd_inf,  tdiv = tdiv, ssflag=True)  
+      
+        
+    sBot, sMiddle, sTop, s10, sborrow_con = IneqStat(out, nPoints)
+
+
+    #print('Obj',objective_func)
+    print('A-B', ((out['A'] - (B+p))  ), 'Middle s', ((sMiddle - 0.45)), 'Bottom',((sBot- 0.05 )), 'Borrow',sborrow_con - 0.07  )
+
+    return out['A'] - (B+p), sMiddle - 0.45, sborrow_con - 0.07
+
+def res_calib_3(x, *args):
+    
+    beta_mid  = x
+ 
+    (EnVa, EuVa, Pi, Pi_ern, a_grid, pi_e, 
+                     e_grid, pi_ern, w, ra, eis,
+                     q, N, destr, b, T_dist, 
+                     div, lumpsum_T, ssAvgInc, VAT, pi_p,  
+                     nPoints, cs_avg, nBeta, dist_type, 
+                     beta_var, beta_disp, B, K, beta_max, phi_a, rho_a, ttd_inf, p, tdiv, Tss) = args 
+    
+    print(x )
+    
+    beta, pi_beta, Pi_beta = beta_dist(nBeta, beta_mid, beta_var, beta_disp, dist_type )
+    Pi   =  np.kron(Pi_beta, Pi_ern)
+    pi_e =  np.kron(pi_beta, pi_ern)
+    
+
+    print(      max(beta)   )    
+    
+    penalty = 0 
+    if max(beta) > beta_max -0.001:
+        beta_mid = beta_max - beta_var - 0.001
+        beta, pi_beta, Pi_beta = beta_dist(nBeta, beta_mid, beta_var, beta_disp, dist_type )
+        Pi   =  np.kron(Pi_beta, Pi_ern)
+        pi_e =  np.kron(pi_beta, pi_ern)  
+        penalty += abs(1+x) 
+    
+    
+    
+    
+    out =   EGMhousehold.ss(EnVa = EnVa, EuVa = EuVa, Pi = Pi, Pi_ern = Pi_ern, a_grid = a_grid, Pi_seed =  pi_e, 
+                             e_grid = e_grid, pi_e = pi_e, pi_ern = pi_ern, w = w  , ra = ra, beta = beta, eis = eis,
+                             q = q, N = N, destr = destr, b = b, T_dist = T_dist, pi_beta = pi_beta, phi_a = phi_a, rho_a = rho_a,
+                             Tss = Tss, Ttd = 0, Tuni = 0, ssAvgInc = ssAvgInc, VAT = VAT,  
+                             nPoints = nPoints, cs_avg = cs_avg, ttd_inf = ttd_inf, tdiv = tdiv, ssflag=True)
+
+    objective_func =   (out['A'] - (B+p))**2
+    print('A-B', (out['A'] - (B+p)))
+    return objective_func
+
+def res_calib_3_root(x, *args):
+    
+    beta_mid = x
+    print(x)
+    args_dict = args[0]
+
+    beta, pi_beta, Pi_beta = beta_dist(args_dict['nBeta'], beta_mid, args_dict['beta_var'] , args_dict['beta_disp'] , args_dict['dist_type'] )
+    #Pi   =  np.kron(Pi_beta, args_dict['Pi_ern'])
+    #pi_e =  np.kron(pi_beta, args_dict['pi_ern'])    
+
+
+    Tss = args_dict['lumpsum_T_init']  
+
+    print(      max(beta)   )    
+    
+    penalty = 0 
+    if max(beta) > args_dict['beta_max'] -0.0005:
+        beta_mid = args_dict['beta_max'] - args_dict['beta_var'] - 0.0005
+ 
+        penalty += abs(1+x) 
+
+    beta, pi_beta, Pi_beta = beta_dist(args_dict['nBeta'], beta_mid, args_dict['beta_var'] , args_dict['beta_disp'] , args_dict['dist_type'] )
+    N =  args_dict['N']
+    pi_n = np.identity(2)
+    Pi   =  np.kron(np.kron(Pi_beta, args_dict['Pi_ern']), args_dict['Pi_N'] )
+    pi_e =  np.kron(np.kron(pi_beta, args_dict['pi_ern']),args_dict['pi_N'])
+    Pi_seed = pi_e
+
+
+        
+    args_dict.update({ 'Tss' : Tss, 'beta' : beta, 'pi_beta' : pi_beta, 'Pi_beta' : Pi_beta, 'Pi' : Pi, 'pi_e' : pi_e})
+
+    out =   EGMhousehold.ss(**args_dict)
+
+    Asset_mkt =   out['A'] - (args_dict['B'] + args_dict['p'])
+
+    #taxes = out['TINC'] - (Tax_N + Tax_S + nonlintax) + (out['C'] - agg_C)* VAT
+    #taxes = out['C'] - args_dict['Agg_C'] +  out['TINC'] - (args_dict['tax_N'] + args_dict['tax_S'] )
+    G_rev = out['TINC'] +  args_dict['VAT'] * out['C']   + args_dict['B'] + args_dict['T_firms']
+    G_exp = args_dict['G']  +  out['UINCAGG']  + Tss + args_dict['B'] * (1 + args_dict['ra'])  
+    taxes = G_rev - G_exp
+    
+    
+    
+    
+    if args_dict['h_con'] :
+        labor = 0 
+    print('A-B', (Asset_mkt))
+    return [Asset_mkt ]
+
+
+def res_calib_4(x, *args):
+    
+
+    (EnVa, EuVa, Pi, Pi_ern, a_grid, pi_e, 
+                     e_grid, pi_ern, w, ra, eis,
+                     q, N, destr, b, T_dist, pi_beta,
+                     div, lumpsum_T, ssAvgInc, VAT, pi_p,  
+                     nPoints, cs_avg, nBeta, beta, B, K, 
+                     phi_a, rho_a, tax_N , tax_S, div_pretax, tCorp, tdiv, G, ttd_inf) = args 
+    
+    B, Agg_C  = x
+    
+    lumpsum_T = (tax_N + tax_S + div_pretax * (tCorp + tdiv) + VAT * Agg_C - b * (1-N)  - B * ra - G)
+    T = transfers(pi_ern, div + lumpsum_T, e_grid, T_dist)
+    
+    out =   EGMhousehold.ss(EnVa = EnVa, EuVa = EuVa, Pi = Pi, Pi_ern = Pi_ern, a_grid = a_grid, Pi_seed =  pi_e, 
+                             e_grid = e_grid, pi_e = pi_e, pi_ern = pi_ern, w = w  , ra = ra, beta = beta, eis = eis,
+                             q = q, N = N, destr = destr, b = b, T_dist = T_dist, pi_beta = pi_beta, phi_a = phi_a, rho_a = rho_a,
+                             Tss = div + lumpsum_T, Ttd = 0, Tuni = 0, ssAvgInc = ssAvgInc, VAT = VAT,  
+                             nPoints = nPoints, cs_avg = cs_avg, ttd_inf = ttd_inf, ssflag=True)
+    
+    
+    
+    #objective_func = np.array([out['A'] - B, out['SU'] - S, sMiddle - 0.45] )
+    #objective_func =   (out['A'] - (B+K))**4  
+    objective_func =   ([Agg_C-out['C'], B + K - out['A']])
+
+    print('C', (Agg_C-out['C']), 'K+B-A', B + K - out['A'])
+
+
+    
+    return objective_func
+ 
+
+#%%    
+
+
+def SAM_calib(U, destr, settings):
+    N = 1-U  
+    if settings['SAM_model']  == 'Standard':
+        S = 1 - (1-destr) * N
+        q = N * destr / S      
+        pMatch = 0.7  # UNEMPLOYMENT AND BUSINESS CYCLES 
+        V = S * q / pMatch   
+        Tight = V / S 
+    
+        def Match_Func_res(x):
+            res = S * q -  S * V / ((S**x + V**x)**(1/x))
+            return res
+        ma = optimize.fsolve(Match_Func_res, [1.4])    
+        destrNO = destr
+        destrO = 0
+        nPos = 1
+    elif settings['SAM_model'] == 'Costly_vac_creation':
+        if settings['SAM_model_variant']  == 'simple':
+            destrO =  destr
+            destrNO = (destr-destrO)/ (1-destrO)
+            S = 1 - (1-destr) * N        
+            q = (N * destr / S)    
+            pMatch = 0.7
+            V = S * q / pMatch   
+            Tight = V / S 
+            nPos = V * pMatch
+            
+            def Match_Func_res(x):
+                res = S * q -  S * V / ((S**x + V**x)**(1/x))
+                return res
+            ma = optimize.fsolve(Match_Func_res, [1.4])            
+                           
+            
+        elif settings['SAM_model_variant'] == 'FR': # Fujita & Ramey 
+            destrO = 0.5 * destr
+            destrNO = (destr-destrO)/ (1-destrO)
+            S = 1 - (1-destr) * N        
+            q = (N * destr / S)/(1-destrO)      
+            pMatch = 0.7
+            V = S * q / pMatch   
+            Tight = V / S 
+        
+            def Match_Func_res(x):
+                res = S * q -  S * V / ((S**x + V**x)**(1/x))
+                return res
+            ma = optimize.fsolve(Match_Func_res, [1.4])            
+                           
+            rhs = (1-destrO) * V + (1-destrO) * destrNO * N -  (1-destrO) * pMatch * V 
+            nPos = V - rhs             
+        
+    return S, q, pMatch, V, Tight, ma, destrO, destrNO, nPos 
+    
+
+
+
+
+def ss_calib(calib, settings): 
+    # Load income tax functions 
+    with open('tax_function/cs_avg.pickle', 'rb') as f:
+        cs_avg = pickle.load(f)
+    with open('tax_function/cs_marg.pickle', 'rb') as f:
+        cs_marg = pickle.load(f)
+
+
+    # Grids
+    nA = 250
+    nBeta = 5  
+    ne = 11 
+    nN = 2
+    amax = 50  
+   
+    #a_grid = utils.agrid(amax=amax, n=nA)
+    e_grid, pi_ern, Pi_ern = utils.markov_rouwenhorst(rho= 0.94, sigma= 0.7, N=ne) # Values from IMPC: rho = 0.91, variance = 0.92. Floden and linde (2001) for Sweden persistence values. 
+
+    h_con = True
+
+    nPoints = [nBeta, ne, nA]
+ 
+    beta_mid_guess  = 0.96467236
+    beta_var_guess  =  0.02
+    beta_disp_guess =  0.06
+    vphi_guess       = 2.125509040803471
+    nonlintax_guess  =  0.049834087883106254
+
+    kappa_g = 0.04
+   
+    # beta_mid_guess  = 0.9638187655100467
+    # beta_var_guess  =  0.025
+    # beta_disp_guess =  0.05
+    # vphi_guess       = 2.125509040803471
+    # nonlintax_guess  =  0.049834087883106254
+
+    # kappa_g = 0.05
+      
+
+    dist_type = "LeftSkewed"
+    beta, pi_beta, Pi_beta = beta_dist(nBeta, beta_mid_guess, beta_var_guess, beta_disp_guess, dist_type )
+    
+
+    N = 0.95  
+    b_ratio = 0.51
+
+    mix = 0
+    destr = 0.1
+    eis = 0.5 
+    frisch = 0.5 
+    alpha = 0.35
+
+    G = 0.24
+    VAT = 0
+    U = 0.05
+          
+    Y = 1 
+    N = 1 - U   
+
+    S, q, pMatch, V, Tight, ma, destrO, destrNO, nPos  = SAM_calib(U, destr, settings)
+    Eq = q 
+    
+    pi_N = [N,1-N]    
+    Pi_N = np.empty([2,2])
+    Pi_N[0,0] = 1 - destr * (1-q)
+    Pi_N[0,1] = destr * (1-q)
+    Pi_N[1,1] = 1 - q * (1-destrO)
+    Pi_N[1,0] = q * (1-destrO)
+   
+    Pi   =  np.kron(np.kron(Pi_beta, Pi_ern), Pi_N)
+    pi_e =  np.kron(np.kron(pi_beta, pi_ern), pi_N)
+    
+    Pi_seed = pi_e
+    
+    # wealth-to-labor income after taxes = 8.2 (from auclert iMPC paper) - NationalBanken shows 6.2 for DK 
+    r = 0.02 / 4 # 2% yearly    
+    rstar = r   
+    P = 1
+    pi = 0 
+   
+
+    # Define income for unemployed
+    Benefit_type = 0 # proportional to e_grid 
+    w = 0.58  / N  # labor share of 63% 
+    wss = w 
+    sBorrow = 0.5
+    a_lb = -w  * sBorrow
+    a_grid = nonlinspace(a_lb , amax, nA, 1.5)      
+    
+    U_inc_g, U_inc_agg_g  = Unemp_benefit(Benefit_type, w * b_ratio, e_grid, pi_ern, ne, w)
+    ssAvgInc =  N * w   + (1-N) * U_inc_agg_g
+    tax_N  = N            * np.vdot(avgTaxf(w   * e_grid, ssAvgInc, cs_avg) * w * e_grid , pi_ern)
+    tax_S  = (1-N)        * np.vdot(avgTaxf(U_inc_g, ssAvgInc, cs_avg) * U_inc_g, pi_ern)    
+    
+    
+    vacK_rate = 0.05
+    if settings['quad_vac']:
+        vacK = vacK_rate / (0.5 *  V**2  / Y)
+    else:
+        vacK = vacK_rate * w * N
+
+    K = 8 
+    mup = 1.1
+    
+    A_tot = 2.3
+    B  = A_tot * 0.5    
+    p = A_tot - B
+    T_firms_g = 0 
+    F_cost_g = 0.05
+    Agg_C_guess  = (ssAvgInc - tax_N - tax_S  + r * A_tot) / (1+VAT) 
+    
+    Fvac_factor = 5 
+    
+    vacK_g = vacK
+    def Asset_calib(x):
+        T_firms_g, Agg_C_g, vacK_g, F_cost_g = x
+        #vacK = 0.07 *  w_g/pMatch
+        
+        mc = 1/mup
+        rk = alpha * mc * Y / K
+        delta = rk - r 
+        I = K * delta  
+        
+        b = optimize.fsolve(b_calib, [w * 0.5], args = (Benefit_type, e_grid, pi_ern, ne, w, b_ratio, N, cs_avg, avgTaxf) )
+
+        U_inc, U_inc_agg  = Unemp_benefit(Benefit_type, b, e_grid, pi_ern, ne, w)
+        
+        
+        MPL = (1-alpha) * mc * Y / N         
+   
+
+        if settings['SAM_model'] == 'Standard':
+            JV = 0
+            JM = (MPL - w) / (1 -  (1-destr) /(1+r))
+            LS_res = JV - (- vacK_g + pMatch * JM)
+            Vac_costs = vacK_g  
+        elif settings['SAM_model'] == 'Costly_vac_creation':            
+            if Fvac_factor == np.inf:
+                Fvac  = vacK_g / nPos 
+                vacK_g = 0 
+            else:
+                Fvac  = Fvac_factor / (nPos / vacK_g)
+            JV = Fvac * nPos
+            JM = (MPL - w) / (1 -  (1-destr) /(1+r))
+            if settings['SAM_model_variant']  == 'simple':
+                LS_res = JV - (- vacK_g + pMatch * JM + (1-pMatch) * JV / (1+r))    
+            else:
+                LS_res = JV - (- vacK_g + pMatch * JM + (1-destrO) * JV / (1+r))            
+            Vac_costs = vacK_g  + Fvac * nPos
+            
+        ssAvgInc =  N * w  + (1-N) * U_inc_agg   
+        tax_N  = N            * np.vdot(avgTaxf(w   * e_grid, ssAvgInc, cs_avg) * w * e_grid , pi_ern)
+        tax_S  = (1-N)        * np.vdot(avgTaxf(U_inc, ssAvgInc, cs_avg)   * U_inc, pi_ern) 
+        
+        
+        div = 1 - w * N  - I - Vac_costs - F_cost_g - T_firms_g
+        p_res = div / r - p
+       
+        A_tot_ = p + B
+        G_rev = tax_N + tax_S +  VAT * Agg_C_g   +  B + T_firms_g 
+        G_exp = G +  U_inc_agg * (1-N) +  B * (1 + r)  
+            
+        lumpsum_T_res = G_rev - G_exp
+        Agg_C  = (ssAvgInc - tax_N - tax_S   + A_tot_ * r ) / (1+VAT) 
+
+
+        A2I =  (p  +   B) / (ssAvgInc - tax_N - tax_S + A_tot_ * r - A_tot_ * kappa_g * 0.15 ) # + A_tot_ * r * 0.85 - A_tot_ * (r+kappa_g) * 0.15
+        #print(A2I)
+        return  np.array([lumpsum_T_res, Agg_C - Agg_C_g, LS_res, p_res]) 
+    
+    
+    #(lumpsum_T, Agg_C, w, F_cost), _ = utils.broyden_solver(Asset_calib, np.array([lumpsum_T_g, Agg_C_guess, w_g, F_cost_g]), tol=1E-06, noisy=True) 
+    sol = optimize.root(Asset_calib, np.array([T_firms_g, Agg_C_guess, vacK_g, F_cost_g]),  method='hybr')
+    (T_firms, Agg_C, vacK, F_cost) = sol.x 
+    if not sol.success:
+        raise Exception("Solver did not succeed") 
+    lumpsum_T = 0 
+    mc = 1/mup
+    rk = alpha * mc / K
+    delta = rk - r 
+    I = K * delta  
+    
+    Fvac  = Fvac_factor / (nPos / vacK)
+    
+    assert mup > 1.05 
+    assert mup < 1.6 
+    #assert F_cost > 0 
+    assert vacK >= 0 
+    
+    
+    b = optimize.fsolve(b_calib, [w * 0.5], args = (Benefit_type, e_grid, pi_ern, ne, w, b_ratio, N, cs_avg, avgTaxf))
+    #b = b_ratio * w 
+    U_inc, U_inc_agg  = Unemp_benefit(Benefit_type, b, e_grid, pi_ern, ne, w) 
+    ssAvgInc =  N * w   + (1-N) * U_inc_agg # average taxable labor income in steady state     
+    tax_N  = N            * np.vdot(avgTaxf(w   * e_grid, ssAvgInc, cs_avg) * w * e_grid , pi_ern)
+    tax_S  = (1-N)        * np.vdot(avgTaxf(U_inc, ssAvgInc, cs_avg) * U_inc, pi_ern)
+    
+           
+    Z = Y / (K ** alpha * N**(1-alpha))
+    Zss = Z     
+
+    MPL = (1-alpha) * mc * Y / N
+
+
+    Tight = V / S 
+    if settings['SAM_model'] == 'Standard':
+        Vac_costs = vacK    
+        JV = 0
+        JM = (MPL - w) / (1 -  (1-destr) /(1+r))            
+    elif settings['SAM_model'] == 'Costly_vac_creation':
+        if Fvac_factor == np.inf:
+            Fvac  = vacK / nPos 
+            vacK = 0 
+        else:
+            Fvac  = Fvac_factor / (nPos / vacK)            
+        JV = Fvac * nPos
+        JM = (MPL - w) / (1 -  (1-destr) /(1+r))       
+        Vac_costs = vacK  + Fvac * nPos
+        
+    div =  1 - w * N  - I - Vac_costs - F_cost - T_firms
+
+    p = div / r
+    
+    MF_Div = 0
+    #A_tot = B + p
+    #mix = p / A_tot
+    mix = 0
+    ra_test =  (div + p)  / A_tot  + (1+r ) * B / A_tot - (1  + r)   
+    ra = r
+    
+    assert abs(ra_test) < 1e-07
+    
+    Agg_C  = (ssAvgInc  - tax_N  - tax_S   + lumpsum_T + A_tot * r ) / (1+VAT) 
+
+    walras1 = 1 - Agg_C  - I - G - Vac_costs  - F_cost
+    print('Walras 1', walras1)
+    #assert abs(walras1) < 1e-8
+
+
+    beta_max = 1/(1+ra)     
+    assert  max(beta)  < beta_max
+    
+    Tss = lumpsum_T + nonlintax_guess
+    T_dist = 0.1
+    T = transfers(pi_ern, Tss, e_grid, T_dist)     
+    bnds = [-8, 8]
+    args = (U_inc, w, pi_ern, e_grid, N, div , Tss, ssAvgInc, cs_avg, transfers, avgTaxf)
+    res = optimize.minimize_scalar(Income_gini, np.array([T_dist]), method='Bounded',  bounds = bnds, args=args)  
+    T_dist = res.x 
+    Income_gini_disp(x = T_dist, args = args)
+    #Tss = lumpsum_T
+    Ttd = 0
+    ttd_inf = {'p75' : 0, 'ss_dist' : np.zeros((ne*nBeta, nA)) }
+
+
+    # initialize guess for policy function iteration
+    s_match = True     
+    use_saved = settings['use_saved']
+    save = settings['save']
+    if use_saved == True:
+        npzfile = np.load('init_values.npz') 
+        EVa = npzfile['x']
+        if (EVa.shape == (nBeta*ne*nN, nA)) is False: # check that loaded values match in shape 
+            s_match = False
+    
+    if s_match == False or use_saved == False:        
+        coh_n  =  np.reshape( (1-avgTaxf(w   * e_grid , ssAvgInc, cs_avg)) * w * e_grid + T,   ((1, ne, 1))) 
+        coh_s  =  np.reshape( (1-avgTaxf(b  * e_grid, ssAvgInc, cs_avg))   * b * e_grid + T ,   ((1, ne, 1)))  
+        coh_n  = np.reshape(np.broadcast_to(coh_n, (nBeta,ne, nA)), (ne*nBeta, nA))
+        coh_s  = np.reshape(np.broadcast_to(coh_s, (nBeta,ne, nA)), (ne*nBeta, nA))    
+        EnVa =  (1 + r) * (0.8  * coh_n) ** (-1 / eis) 
+        EuVa =  (1 + r) * (0.8  * (coh_s )) ** (-1 / eis) 
+        EVa = np.reshape(np.stack((np.reshape(EnVa, (nBeta, ne, nA)), np.reshape(EuVa, (nBeta, ne, nA))), axis=-2), (nBeta* ne*nN, nA))
+        
+    ssc = np.ones([EVa.size])
+    #beta_mid_guess, beta_var_guess, beta_disp_guess, obj  = init_search()
+    lumpsum_T_init = lumpsum_T
+
+    if (calib == 'Full_calib') or (calib == 'Partial_calib'):   
+            args = {}
+            args = { 'EVa' : EVa,  'Pi' : Pi, 'dist_type' : dist_type, 'nBeta' : nBeta, 'Pi_ern' : Pi_ern, 'a_grid' : a_grid, 'pi_e' : pi_e, 'ssN' : N, 'h_con' : h_con,
+                     'e_grid' : e_grid, 'pi_ern' : pi_ern, 'w' : w, 'ra' : ra, 'eis' : eis, 'q' : q, 'N' : N, 'destr' : destr, 'U_inc' : U_inc, 'T_dist' : T_dist,
+                     'div' : div, 'lumpsum_T_init' : lumpsum_T_init, 'ssAvgInc' : ssAvgInc, 'VAT' : VAT, 'pi' : pi, 'rstar' : rstar, 'MF_Div' : MF_Div, 'mix' : mix, 'wss' : w, 
+                     'nPoints' : nPoints, 'cs_avg' : cs_avg, 'dist_type' : dist_type, 'B' : B, 'rss' : r, 'p' : p , 'sBorrow' : sBorrow, 'hss' : 1,  'T_firms' : T_firms,
+                     'beta_max' : beta_max, 'ttd_inf' : ttd_inf, 'K' : K, 'Tss' : Tss, 'frisch' : frisch, 'G' : G, 'P' : P, 'P_lag' : P, 'N_' : N, 
+                     'tax_N' : tax_N, 'a_lb' : a_lb, 'b' : b, 'Benefit_type' : Benefit_type, 'Pi_seed' : Pi_seed, 'Ttd' : Ttd, 'Tuni' :0, 'pi_N' : pi_N, 'Pi_N' : Pi_N,
+                     'Agg_C' : Agg_C, 'tax_S' : tax_S, 'destrO' : destrO, 'ssflag' : True}      
+    
+            if calib == 'Full_calib':
+                
+                res1 = optimize.minimize(res_calib_2, np.array([beta_mid_guess, beta_var_guess, beta_disp_guess, vphi_guess, kappa_g]), method='Nelder-Mead',   args=args, tol = 1e-5)  
+                
+                beta_mid_guess, beta_var, beta_disp, vphi_guess, nonlintax_guess, kappa  = res1.x               
+                beta_var_guess  = beta_var   
+                beta_disp_guess = beta_disp
+                kappa_g = kappa
+            
+            # partial calib    
+            kappa = kappa_g
+            beta_var  = beta_var_guess   
+            beta_disp = beta_disp_guess    
+            args.update({'beta_var' : beta_var, 'beta_disp' : beta_disp, 'kappa' : kappa})     
+                        
+                   
+            print('Beta distribution:', beta_mid_guess, beta_var_guess, beta_disp_guess ) 
+            print('Labor supply', vphi_guess, nonlintax_guess)
+            
+            cons = ({'type': 'ineq', 'fun': lambda x, beta_var = beta_var : 1/(1+r) -   x[0] - beta_var},
+                    {'type': 'ineq', 'fun': lambda x, beta_mid_guess = beta_mid_guess :  x[0] - (beta_mid_guess - 0.05) })    
+            bnds = ((beta_mid_guess-0.03, beta_mid_guess+0.03),)
+            #res = optimize.minimize(res_calib_3, beta_mid_guess, method='Nelder-Mead',  args=args)    
+            res = optimize.root(res_calib_3_root, [beta_mid_guess], args=args, method='hybr')
+            
+            beta_mid = res.x          
+            beta, pi_beta, Pi_beta = beta_dist(nBeta, beta_mid, beta_var, beta_disp, dist_type )
+            Pi   =  np.kron(np.kron(Pi_beta, Pi_ern), Pi_N)
+            pi_e =  np.kron(np.kron(pi_beta, pi_ern), pi_N)        
+            Pi_seed = pi_e    
+    elif calib == 'Solve' : 
+            beta_mid  = beta_mid_guess
+            beta_var  = beta_var_guess
+            beta_disp = beta_disp_guess  
+            vphi      = vphi_guess
+            nonlintax = nonlintax_guess
+            kappa = kappa_g                        
+    else : 
+            raise ValueError('No calibration chosen!')
+
+
+    print(beta_mid, beta_var, beta_disp)
+        
+    Tss = lumpsum_T 
+
+    # Evaluate HH block at calibrated parameters 
+    ss =   EGMhousehold.ss(EVa = EVa, Pi = Pi, Pi_ern = Pi_ern, a_grid = a_grid, Pi_seed = Pi_seed, rstar = rstar, 
+                           sBorrow = sBorrow, P = P,  Y = Y, 
+                           hss = 1, kappa = kappa, ssN = N, h_con = h_con, 
+                           e_grid = e_grid,  pi_e = pi_e, pi_ern = pi_ern, w = w, ra = ra, beta = beta, eis = eis,
+                           q = q, N = N, N_=N, destr = destr, destrO = destrO, b = b, Benefit_type = Benefit_type, T_dist = T_dist, pi_beta = pi_beta, wss = w, 
+                           Tss =  Tss, Ttd = Ttd, Tuni = 0, ssAvgInc = ssAvgInc, VAT = VAT,  
+                           nPoints = nPoints,  cs_avg = cs_avg, ttd_inf = ttd_inf,  frisch = frisch, ssflag=True)
+    
+    if save == True:
+        np.savez('init_values', x = ss['EVa'])
+
+    # Short run parameters not identified/needed in SS 
+    phi = 1.3
+    kappak = 6
+    eps_p = mup / (mup-1)
+    kappap =   eps_p / 0.03 
+
+    # 75pth wealth percentile
+    p75 = weighted_quantile(ss['a'].flatten(), 0.75,  sample_weight=ss['D'].flatten())
+    ttd_inf = {'p75' : p75, 'ss_dist' : ss['D']}
+
+
+    Agg_C  = (ssAvgInc - tax_N - tax_S  + Tss + (p + B) * r) / (1+VAT) 
+
+
+    sc_neg = np.nonzero(ss['a'] < 0)
+    walras = 1 - ss['C']  - I - G - Vac_costs - F_cost + kappa * ss['A_DEBT'] #np.vdot(ss['D'][sc_neg], ss['a'][sc_neg])
+    G_rev = ss['TINC'] +  VAT * ss['C']   + B + T_firms 
+    G_exp = G + ss['UINCAGG'] + Tss + B * (1 + r)   
+
+    
+    print('Walras 2', walras)   
+    print('Asset market err', ss['A']-(B+p), 'G_budget', G_rev - G_exp)    
+    
+    ss.update({'goods_mkt' : walras})
+
+    a_pop = ss['a']  
+    sc = np.nonzero(ss['a'] < a_lb + 1e-7)
+    print( 100 * sum(ss['D'][sc]))
+    
+    print( 100 * sum(ss['D'][sc_neg]))
+    print(IneqStat(ss, nPoints, a_lb))
+ 
+    ss.update({'V': V, 'vacK' : vacK, 'pMatch' : pMatch, 'q': q, 'N' : N, 'B': B, 'kappap': kappap, 'Y': Y, 'rstar': r, 'Z': Z, 'mup': mup, 'pi': pi, 'Pi' : Pi, 'eps_p' : eps_p,  'Pi_seed' : pi_e, 'MPL' : MPL,
+               'K': K, 'alpha': alpha, 'delta': delta, 'I': I, 'S': S, 'G' : G,  'div' : div, 'phi' : phi, 'T_dist' : T_dist, 'Tuni' : 0, 'ttd_inf' : ttd_inf, 'L' :  N, 'U_inc' : U_inc, 'Agg_C' : Agg_C, 'p' : p, 'T_rate' : 1, 'ssN' : N, 'pshare' : p/ss['A'], 'destrO' : destrO, 'destrNO' : destrNO,
+               'kappap': kappap, 'eis': eis, 'beta': beta,  'destr': destr, 'Q': 1,  'mc': mc,  'lumpsum_T' : lumpsum_T, 'Zss' : Zss, 'ra' : r, 'rk' : rk, 'r' : r, 'i' : r, 'Tightss' : Tight, 'ma' : ma, 'piw' : 0, 'a_lb' : a_lb, 'mix' : mix,'Pi_N' : Pi_N, 'pi_N' : pi_N,
+               'Nss' : N, 'wss' : w,  'MF_Div' : MF_Div, 'G_rev' : G_rev, 'G_exp': G_exp, 'P' : 1, 'Tss' : lumpsum_T, 'Ttd' : Ttd, 'I_s' : 1, 'Isip' :0, 'rss' : r, 'F_cost' : F_cost, 're' : r, 'b_ratio' : b_ratio, 'rg' : r, 'dist_type' : dist_type, 'Fvac' : Fvac,
+               'VAT': VAT, 'pi_ern' : pi_ern, 'ssAvgInc' : ssAvgInc, 'b' : b,  'Tight' : Tight, 'psip' : 0, 'isip' : 0,  'K_cost' : 0, 'kappak' : kappak, 'cs_avg' : cs_avg, 'Bss' : B, 'epsI' :4, 'Benefit_type' : Benefit_type, 'div_' : div, 'UINCAGG_count' : ss['UINCAGG'], 'T_firms' : T_firms,
+               'beta_mid' : beta_mid, 'beta_var' : beta_var, 'beta_disp' : beta_disp, 'uT' : 0,  'div_MF' : 0, 'nPos' : nPos, 'JV' : JV, 'JM' : JM, 'ssflag': False})    
+     
+
+    print('Average Beta' , np.vdot(beta, pi_beta))
+
+    
+    # Check bargaining set 
+    upper_lvl =  (1-alpha) * mc / N
+    lower_lvl = b
+
+    assert w < upper_lvl
+    assert w > lower_lvl  
+
+    ss.update({'A_agg' : ss['A'], 'C_agg' : ss['C'], 'taxes' : ss['TINC']})
+
+    # Check that income is strictly positive 
+    assert min(ss['Inc'].flatten()) > 0
+
+    return ss 
+
+    
+#calib = 'Full_calib'     # Calibrate to all moments in wealth distribution
+#calib = 'Partial_calib'   # Calibrate asset market equilibrium A = p + B
+calib = 'Solve'          # Solve with pre-specified values 
+   
+
+settings = {'save' : True, 'use_saved' : True}
+settings['quad_vac'] =  False
+
+settings['SAM_model'] = 'Standard'
+#settings['SAM_model'] = 'Costly_vac_creation'
+#settings['SAM_model_variant'] = 'FR'
+#settings['SAM_model_variant'] = 'simple'
+
+ss = ss_calib(calib, settings)     
+
+
+   #%%   Impulses 
+    
+
+"(mc, Y) -> (nkpc)"
+@simple
+def pricing(pi, mc, Y, kappap, mup, r, rstar, eps_p):    
+    eps_p = mup / (mup-1)
+    #nkpc = (1-eps_p) + eps_p * mc - kappap * (pi+1) * pi   + kappap * Y(+1) / Y *  (pi(+1)+1) * pi(+1)  / (1 + r(+1)) 
+    #nkpc = 0.01 * (mc - 1/mup) + Y(+1) / Y * pi(+1) / (1 + rstar) - pi 
+    
+    #nkpc = (Y(+1) / Y) / (1 + r(+1)) * pi(+1) - 0.01 * (mc - 1/mup) - (pi)
+    nkpc =  (eps_p / kappap) * (mc - 1/mup) + Y(+1) / Y * np.log(1 + pi(+1)) / (1 + r(+1)) - np.log(1 + pi)
+    #nkpc = pi - ( Y(+1) / Y *  pi(+1) / (1 + r(+1)) + (eps_p / kappap) * (np.log(mc) - np.log(1/mup)))
+    #nkpc = (1-eps_p) + eps_p * mc - kappap * (pi-1) * pi   + kappap * (Y(+1) / Y) *  (pi(+1)-1) * pi(+1)  / (1 + r(+1)) 
+    return nkpc  
+
+
+@solved(unknowns=['K', 'Q', 'I'], targets=['inv', 'val', 'K_res'])
+def firm_investment(K,  alpha, rstar, delta, kappak, Q, mc, Y, I_s, I, r):       
+    rk_plus =  alpha * mc(+1) * Y(+1) / K 
+    inv = Q - (rk_plus + Q(+1) * (1-delta))/(1+r(+1))
+    LHS = 1 + kappak/2 * (I/I(-1) -1)**2   + I/I(-1) * kappak * (I/I(-1) -1) 
+    RHS = Q(+1)  + kappak * (I(+1)/I -1) * (I(+1)/I)**2   
+    val = LHS - RHS     
+    K_res = K - ((1 - delta) * K(-1) + I(-1)) 
+    return inv, val, K_res
+
+
+# @solved(unknowns=['K', 'Q', 'I'], targets=['inv', 'val', 'K_res'])
+# def firm_investment(K,  alpha, rstar, delta, kappak, Q, mc, Y, I_s, I, r):
+#     epsI = 3 
+#     MPK = alpha * mc(+1) * Y(+1) / K 
+#     inv = (K/K(-1) - 1) / (delta * epsI) + 1 - Q
+    
+#     val = MPK  - (K(+1)/K -
+#             (1-delta) + (K(+1)/K - 1)**2 / (2*delta*epsI)) + K(+1)/K*Q(+1) - (1 + r(+1))*Q
+#     K_res = K - ((1 - delta) * K(-1) + I) 
+#     return inv, val, K_res, MPK
+
+@simple
+def firm_labor_standard(mc, Y, N, alpha, pMatch, vacK, destr, w,  L, rstar, r, Z, JV, JM):   
+    MPL = (1-alpha)  * mc * Y / N   
+    free_entry = JV - 0
+    JV_res = JV - (- vacK + pMatch * JM)
+    JM_res = JM - ((MPL - w) + JM(+1) * (1-destr)/(1+r(+1)))         
+    return  free_entry, JV_res, JM_res 
+
+@simple
+def ProdFunc(Y, Z, K, alpha, L): 
+    ProdFunc_Res = Y - Z * K(-1)**alpha * L**(1-alpha)
+    return ProdFunc_Res
+    
+
+@solved(unknowns=['w'], targets=['w_res'])
+def wage_func1(Tight, w, wss, Tightss, pi): 
+    #eta =  0.005
+    eta =  0.01
+    eta_pi = 0
+    rho = 0
+    rho_forward = 0
+    w_res = np.log(w) - (np.log(w(-1)) * rho + (1-rho) * (np.log(wss) + eta * ((1-rho_forward) *np.log(Tight/Tightss) + rho_forward * np.log(Tight(+1)/Tightss)) ) )
+    
+    return w_res
+
+    
+@solved(unknowns=['w'], targets=['w_res'])
+def wage_func2(L, Y, w, wss): 
+    eta =  0.45
+    rho = 0   
+    
+    #w_res = np.log(w) - (np.log(w(-1)) + eta * np.log(Tight/Tight(-1)) )
+    #w_res = w - (wss * (Tight/Tightss)**eta * (1+pi)**eta_pi )
+    w_res = np.log(w) - (np.log(w(-1)) * rho + (1-rho) * (np.log(wss) + eta * (0.5 *np.log((Y/L)*ss['L']) + 0.5 * np.log((Y(+1)/L(+1))*ss['L'])) ) )
+    #w_res = np.log(w) - (np.log(wss) + eta * (0.5 *np.log(Tight/Tightss) + 0.5 * np.log(Tight(+1)/Tightss)) ) 
+    
+    return w_res
+
+@simple
+def laborMarket1(q, N, destr, S, pMatch, Tight):
+    N_res = N - ((1-destr) * N(-1) + S * q)    
+    S_res = S - (1 - (1-destr) * N(-1))
+    V = q * S / pMatch
+    N_ = N
+    return N_res, S_res, V, N_
+
+@simple
+def laborMarket2(Tight, ma): 
+    q      = Tight / ((1+Tight**ma)**(1/ma))
+    pMatch = q / Tight
+    return q, pMatch
+
+
+@simple 
+def MutFund(B, A_agg, r, ra, div,  p, pshare):
+    MF_Div = pshare * (div + p) / p(-1) + (1-pshare) * (1 + r) 
+    MF_Div_res = 1+ra - ( MF_Div)
+    return  MF_Div_res, MF_Div
+
+@solved(unknowns=['p'], targets=['equity'])
+def arbitrage(div, p, r):
+    equity = div(+1) + p(+1) - p * (1 + r(+1))
+    return equity
+
+
+@simple
+def dividend_standard(Y, w, N, pi, mup, vacK, V, I, kappap, F_cost, kappak, uT, T_rate, T_firms):
+    psip = kappap  * pi ** 2 * Y / 2 
+    Isip = kappak * (I/I(-1) -1)**2 * I /2
+    div = Y - w * N  -  vacK  - I  - psip - Isip - F_cost - T_firms 
+    return psip, Isip, div
+
+
+@simple
+def dividend_costly_vac(Y, w, N, pi, mup, vacK, V, I, kappap, F_cost, kappak, uT, T_rate, T_firms, nPos, Fvac):
+    psip = kappap  * pi ** 2 * Y / 2 
+    Isip = kappak * (I/I(-1) -1)**2 * I /2
+    div = Y - w * N  -  vacK - Fvac * ss['nPos'] - I  - psip - Isip - F_cost - T_firms 
+    return psip, Isip, div
+
+@solved(unknowns=[ 'i',  'r'], targets=['i_res',  'fisher'])
+def monetary(rstar, pi, i, r, phi):
+    rho   = 0.8
+    i_res = i -   (rho * i(-1) + (1-rho) * (rstar + phi * pi) )    
+    fisher = 1 + i(-1) - (1 + r) * (1 + pi)
+    return i_res, fisher 
+
+
+@simple 
+def fiscal_rev(C, VAT, B, taxes,  MF_Div, T_firms):  
+    G_rev = taxes  + B  + T_firms 
+    return G_rev
+
+@simple 
+def fiscal_exp(b, r, G, B, N, lumpsum_T, uT, UINCAGG_count): 
+    G_exp = G + UINCAGG_count  + (lumpsum_T + uT)  + B(-1) * (1+r) 
+    return G_exp
+
+
+@simple 
+def unempbenefits(UINCAGG, N): 
+    UINCAGG_count = UINCAGG 
+    return UINCAGG_count
+
+@simple 
+def B_res(G_rev, G_exp):  
+    B_res = G_rev - G_exp
+    return B_res
+
+@simple 
+def HHTransfer(uT):  
+    Tuni  = uT
+    return Tuni
+
+@simple 
+def Fiscal_stab_G(B, Bss, lumpsum_T, P, rg):  
+    rho = 0.8
+    G = ss['G'] - 0.1 *  np.log(B/ss['B'])
+    return  G
+
+@simple
+def Fiscal_stab_T(B,  Bss, lumpsum_T, P, rg):  
+    uT =  - 0.2 *  np.log(B(-1)/ss['B'])
+    Tuni = uT
+    return  uT, Tuni
+
+
+
+@simple
+def goods_mkt_clearing_standard(Y, C_agg, C, I, G, psip, V , vacK, Isip, F_cost, A_DEBT, kappa):      
+    goods_mkt = Y - C_agg  - I  - G  -  vacK   - psip - Isip - F_cost + kappa * A_DEBT(-1)
+    return goods_mkt   
+
+@simple
+def goods_mkt_clearing_costly_vac(Y, C_agg, C, I, G, psip, V , vacK, Isip, F_cost, A_DEBT, kappa, Fvac, nPos):      
+    goods_mkt = Y - C_agg  - I  - G  -  vacK - Fvac * nPos  - psip - Isip - F_cost + kappa * A_DEBT(-1)
+    return goods_mkt   
+    
+@simple
+def Asset_mkt_clearing2(A_agg, B, p):  
+    Asset_mkt = B + p - A_agg 
+    return Asset_mkt    
+
+@simple
+def Labor_mkt_clearing(N, L):     
+    Labor_mkt = L  -  N
+    return Labor_mkt    
+
+
+@simple
+def aggregate(CN, CS, AN, AS, N, ssN, TAXN, TAXS, UINCAGG, TINC, CTD, ATD):
+    dN =  N/ssN
+    dU = (1-N)/(1-ssN) 
+    # C_agg =  CN * dN +  CS * dU
+    # A_agg =  AN * dN +  AS * dU
+    # C_agg =  CN * dN +  CS * dU
+    # A_agg =  AN * dN +  AS * dU  
+    C_agg =  CTD  
+    A_agg = ATD     
+    #taxes = TAXN * dN + TAXS*  dU
+    taxes = TINC
+    UINCAGG_count  =  UINCAGG * dU
+    return C_agg, A_agg, taxes, UINCAGG_count
+
+
+'''Simple FR LM'''
+@simple
+def firm_labor_costly_vac(N, mc, Y, alpha, pMatch, vacK, destr,destrO, w,  L, rstar, r, nPos, Fvac, JV, JM):   
+    MPL = (1-alpha) *  mc * Y / N
+    free_entry = JV -  nPos * Fvac
+    JV_res = JV - (- vacK + pMatch * JM + (1-pMatch) * JV(+1) /(1+r(+1)))
+    JM_res = JM - ((MPL-w) + JM(+1) * (1-destr)/(1+r(+1)))    
+    return  free_entry, JV_res, JM_res, MPL
+
+@simple
+def laborMarket1_costly_vac(q, N, destr, S, pMatch, destrO, destrNO, V):
+    N_res = N - ((1-destr) * N(-1) + S * q )    
+    S_res = S - (1 - (1-destr) * N(-1))
+    Match_res = V * pMatch - q * S 
+    nPos = V - (1-pMatch(-1)) * V(-1) 
+    N_ = N
+    return N_res, S_res, Match_res, N_, nPos 
+
+'''Fujita & Ramey LM'''
+@simple
+def firm_labor_costly_vac_FR(N, mc, Y, alpha, pMatch, vacK, destr,destrO, w,  L, rstar, r, nPos, Fvac, JV, JM):   
+    MPL = (1-alpha) *  mc * Y / N
+    free_entry = JV - nPos * Fvac
+    JV_res = JV - (- vacK + pMatch * JM + (1-destrO) * JV(+1) /(1+r(+1)))
+    JM_res = JM - ((MPL-w) + JM(+1) * (1-destr)/(1+r(+1)))    
+    return  free_entry, JV_res, JM_res, MPL
+
+@simple
+def laborMarket1_costly_vac_FR(q, N, destr, S, pMatch, destrO, destrNO, V):
+    N_res = N - ((1-destr) * N(-1) + S * q * (1-destrO))    
+    S_res = S - (1 - (1-destr) * N(-1))
+    Match_res = V * pMatch - q * S 
+    nPos = V - ((1-destrO) * V(-1) + (1-destrO) * destrNO * N(-1) -  (1-destrO) * V(-1) * pMatch(-1)) 
+    N_ = N 
+    return N_res, S_res, Match_res, nPos, N_ 
+
+
+def Choose_LM(settings):
+    if settings['SAM_model'] == 'Standard':
+        dividend = dividend_standard
+        LM = solved(block_list=[laborMarket1, laborMarket2, firm_labor_standard, wage_func1],  
+                    unknowns=['N', 'S', 'Tight',  'JV', 'JM'],
+                    targets=[ 'N_res', 'S_res',  'free_entry', 'JV_res', 'JM_res'] )  
+        goods_mkt_clearing = goods_mkt_clearing_standard
+            
+    elif settings['SAM_model'] == 'Costly_vac_creation':
+        dividend = dividend_costly_vac
+        goods_mkt_clearing = goods_mkt_clearing_costly_vac   
+        if settings['SAM_model_variant'] == 'simple':    
+            LM = solved(block_list=[laborMarket1_costly_vac, laborMarket2, firm_labor_costly_vac, wage_func1],  
+                        unknowns=['N', 'S', 'Tight', 'V', 'JV', 'JM'],
+                        targets=[ 'N_res', 'S_res', 'Match_res', 'free_entry', 'JV_res', 'JM_res'] )  
+        elif settings['SAM_model_variant'] == 'FR': 
+            LM = solved(block_list=[laborMarket1_costly_vac_FR, laborMarket2, firm_labor_costly_vac_FR, wage_func1],  
+                        unknowns=['N', 'S', 'Tight', 'V', 'JV', 'JM'],
+                        targets=[ 'N_res', 'S_res', 'Match_res', 'free_entry', 'JV_res', 'JM_res'] )  
+    return dividend, LM, goods_mkt_clearing 
+        
+dividend, LM, goods_mkt_clearing = Choose_LM(settings)
+
+Asset_block_G = solved(block_list=[ fiscal_rev, fiscal_exp, B_res, dividend, EGMhousehold,  arbitrage, MutFund, Fiscal_stab_G,  aggregate],
+                unknowns=[ 'B',  'ra'],
+                targets=[  'B_res','MF_Div_res'] )  
+
+Asset_block_T = solved(block_list=[ fiscal_rev, fiscal_exp, B_res, dividend, EGMhousehold,  arbitrage, MutFund, Fiscal_stab_T, aggregate],
+                unknowns=[ 'B',  'ra'],
+                targets=[  'B_res','MF_Div_res'] )  
+
+Asset_block_B = solved(block_list=[ fiscal_rev, fiscal_exp, B_res, dividend, EGMhousehold,  arbitrage, MutFund,  aggregate],
+                unknowns=[ 'B',  'ra'],
+                targets=[  'B_res','MF_Div_res'] )  
+
+Asset_block_only_T = solved(block_list=[ fiscal_rev, fiscal_exp, B_res, dividend, EGMhousehold,  arbitrage, MutFund,  aggregate, HHTransfer],
+                unknowns=[ 'uT',  'ra'],
+                targets=[  'B_res','MF_Div_res'] )  
+
+prod_stuff = solved(block_list=[monetary, pricing, ProdFunc, firm_investment],
+                unknowns=[ 'pi', 'Y'],
+                targets=[  'nkpc' , 'ProdFunc_Res' ] )  
+
+
+
+#ss.update({'T_rate' : 1}) 
+# Calculate Jacobian 
+Time = 300   
+Ivar = 'mup'
+exogenous = [Ivar]  
+unknowns = ['L', 'mc']
+targets = ['Asset_mkt', 'Labor_mkt']
+# general equilibrium jacobians
+block_list = [LM, Asset_block_T, prod_stuff, Asset_mkt_clearing2, goods_mkt_clearing, Labor_mkt_clearing] 
+
+
+lin_solve = True
+G_jac = jac.get_G(block_list, exogenous, unknowns, targets,  Time, ss, save=True)
+
+
+rhos = 0.6
+dZ =  0.1 *ss[Ivar] * rhos**(np.arange(Time))
+
+
+if lin_solve:
+    dMat = FigUtils.Shock_mult(G_jac, dZ, Ivar)
+else:
+    # Non-linear solver 
+    H_U = jac.get_H_U(block_list, unknowns, targets, Time, ss, use_saved=True)
+    H_U_factored = utils.factor(H_U)
+    
+    kwargs = {Ivar  : ss[Ivar] + dZ}
+    td_nonlin = nonlinear.td_solve(ss, block_list, unknowns, targets, H_U_factored=H_U_factored, **kwargs)
+    dMat = {}
+    for i in td_nonlin.keys():
+        if i in ss:
+            dMat[i] = td_nonlin[i] - ss[i]        
+    
+
+H_U_cur = jac.get_H_U(block_list, unknowns, targets, Time, ss, use_saved=True)
+_, s, _ = np.linalg.svd(H_U_cur)
+print('Singular value ratio', s[-1] / s[-2] )
+print(f'Smallest singular values: {s[-3]:.4f}, {s[-2]:.4f}, {s[-1]:.4f}')
+
+
+
+A = jac.get_H_U(block_list, unknowns, targets, Time, ss, asymptotic=True, use_saved=True)
+wn = det.winding_criterion(A)
+print(f'Winding number: {wn}')
+
+
+
+tplotl = Time 
+fig = FigUtils.FigPlot3x3_new(ss, dMat, Ivar, tplotl, dZ)
+plt.show() 
+
+tplotl = 30
+fig = FigUtils.FigPlot3x3_new(ss, dMat, Ivar, tplotl, dZ)
+plt.savefig('plots/main_shock_capital_adjustment_costs.pdf')
+#plt.savefig('plots/main_shock_G.pdf')
+plt.show() 
+
+
+#%%
+
+#dN_L = -100  * (dMat['N']-dMat['L']) * ss['w']/ ss['C'] 
+dI = 100 *  dMat['goods_mkt']  / ss['C']
+plt.plot(  dI[:30])
+#plt.plot(  dN_L[:30])
+plt.plot(np.zeros(30),  linestyle='--', linewidth=1, color='black')
+plt.show()
+
+
+
+
+#%%
+Ivar = 'Z'
+exogenous = [Ivar]
+settings['SAM_model'] = 'Standard'
+ss_standard = ss_calib('Solve', settings)     
+
+
+block_list=[laborMarket1, laborMarket2, firm_labor_standard, wage_func1, ProdFunc]
+unknowns = ['N', 'S', 'Tight',  'JV', 'JM', 'Y']
+targets = [ 'N_res', 'S_res',  'free_entry', 'JV_res', 'JM_res', 'ProdFunc_Res']
+
+
+G_jac_standard = jac.get_G(block_list, exogenous, unknowns, targets,  Time, ss_standard, save=False)
+
+
+settings['SAM_model'] = 'Costly_vac_creation'
+settings['SAM_model_variant'] = 'simple'
+ss_costly = ss_calib('Solve', settings)
+
+block_list = [laborMarket1_costly_vac, laborMarket2, firm_labor_costly_vac, wage_func1, ProdFunc]
+unknowns   = ['N', 'S', 'Tight', 'V', 'JV', 'JM', 'Y']
+targets    = [ 'N_res', 'S_res', 'Match_res', 'free_entry', 'JV_res', 'JM_res',  'ProdFunc_Res']   
+    
+G_jac_costly_vac = jac.get_G(block_list, exogenous, unknowns, targets,  Time, ss_costly, save=False)
+
+# FR 
+settings['SAM_model'] = 'Costly_vac_creation'
+settings['SAM_model_variant'] = 'FR'
+ss_costly_FR = ss_calib('Solve', settings)
+
+block_list = [laborMarket1_costly_vac_FR, laborMarket2, firm_labor_costly_vac_FR, wage_func1, ProdFunc]
+unknowns   = ['N', 'S', 'Tight', 'V', 'JV', 'JM', 'Y']
+targets    = [ 'N_res', 'S_res', 'Match_res', 'free_entry', 'JV_res', 'JM_res',  'ProdFunc_Res']   
+    
+G_jac_costly_vac_FR = jac.get_G(block_list, exogenous, unknowns, targets,  Time, ss_costly_FR, save=False)
+
+
+
+#%%
+
+rhos = 0.9
+dZ =  - 0.05 *ss[Ivar] * rhos**(np.arange(Time))
+dMat_standard = FigUtils.Shock_mult(G_jac_standard, dZ, Ivar)
+dMat_costly_vac = FigUtils.Shock_mult(G_jac_costly_vac, dZ, Ivar)
+dMat_costly_vac_FR = FigUtils.Shock_mult(G_jac_costly_vac_FR, dZ, Ivar)
+
+
+pylab.rcParams.update(params)
+fig, ((ax1, ax2, ax3)) = plt.subplots(1, 3)
+
+plot_hori = 30 
+
+ax1.plot(100 * dMat_standard['N'][:plot_hori]/ss['N'], label = 'Standard')
+ax1.plot(100 * dMat_costly_vac['N'][:plot_hori]/ss_costly['N'], label = 'Sunk Cost - simple')
+ax1.plot(100 * dMat_costly_vac_FR['N'][:plot_hori]/ss_costly_FR['N'], label = 'Sunk Cost - FR', color = 'Darkgreen')
+ax1.legend() 
+ax1.set_title('Employment')
+plt.gcf().set_size_inches(7*1.3, 2*1.3) 
+
+
+ax1.plot(np.zeros(plot_hori),  linestyle='--', linewidth=1, color='black')
+ax2.plot(np.zeros(plot_hori),  linestyle='--', linewidth=1, color='black')
+ax3.plot(np.zeros(plot_hori),  linestyle='--', linewidth=1, color='black')
+
+
+ax2.plot(100 * dMat_standard['V'][:plot_hori]/ss['V'], label = 'Standard')
+ax2.plot(100 * dMat_costly_vac['V'][:plot_hori]/ss_costly['V'], label = 'Sunk Cost - simple')
+ax2.plot(100 * dMat_costly_vac_FR['V'][:plot_hori]/ss_costly_FR['V'], label = 'Sunk Cost - FR', color = 'Darkgreen')
+ax2.set_title('Vacancies')
+
+ax3.plot(100 * dMat_standard['q'][:plot_hori]/ss['q'], label = 'Standard')
+ax3.plot(100 * dMat_costly_vac['q'][:plot_hori]/ss_costly['q'], label = 'Sunk Cost- simple')
+ax3.plot(100 * dMat_costly_vac_FR['q'][:plot_hori]/ss_costly_FR['q'], label = 'Sunk Cost - FR', color = 'Darkgreen')
+ax3.set_title('Job-finding rate')
+ax1.legend(loc='best',prop={'size': 6})
+
+ax1.set_xlabel('quarters')
+ax1.set_ylabel('Pct. Deviation from SS')
+ax2.set_xlabel('quarters')
+ax2.set_ylabel('Pct. Deviation from SS')
+ax3.set_xlabel('quarters')
+ax3.set_ylabel('Pct. Deviation from SS')
+fig.tight_layout()
+#plt.savefig('plots/Labor_market/model_comp.pdf')
+
+plt.show() 
+
+
+#%% Beveridge
+
+ax = plt.subplot(1,1,1)
+
+converged_by = 15
+N1 = ss['N'] + dMat_standard['N'][:converged_by]
+x1 = (1 - N1) * 100 
+V1 = ss['V'] + dMat_standard['V'][:converged_by]
+y1= (V1 / (N1+V1))*100
+a1,b1, m1 = np.polynomial.polynomial.polyfit(x1, y1, 2)
+ax.plot(x1, y1,  linestyle='', marker='o', color = 'b')
+ax.plot(x1, a1 +b1 * x1 + m1 * x1**2, '-', label = 'Standard', color = 'b')
+ax.set_xlabel('Unemployment Rate')    
+ax.set_ylabel('Vacancy Rate')   
+
+N2 = ss['N'] + dMat_costly_vac['N'][:converged_by]
+x2 = (1 - N2) * 100 
+V2 = ss['V'] + dMat_costly_vac['V'][:converged_by]
+y2= (V2 / (N2+V2))*100
+a2,b2, m2 = np.polynomial.polynomial.polyfit(x2, y2, 2)
+ax.plot(x2, y2,  linestyle='', marker='o', color = 'r')
+ax.plot(x2, a2 +b2 * x2 + m2 * x2**2, '-', label = 'Sunk Cost', color = 'r')
+plt.legend() 
+fig.tight_layout()
+plt.show() 
+
+
+#%% Beveridge
+
+ax = plt.subplot(1,1,1)
+
+converged_by = 10
+N = ss['N'] + dMat['N'][:converged_by]
+x = (1 - N) * 100 
+V = ss['V'] + dMat['V'][:converged_by]
+y = (V / (N+V))*100
+a,b, m = np.polynomial.polynomial.polyfit(x, y, 2)
+ax.plot(x, y,  linestyle='', marker='o')
+ax.plot(x, a +b * x + m * x**2, '-')
+ax.set_xlabel('Unemployment Rate')    
+ax.set_ylabel('Vacancy Rate')    
+
+#%% Finding rates from different models -> households 
+
+
+settings['SAM_model'] = 'Standard'
+ss_standard = ss_calib('Partial_calib', settings)   
+  
+settings['SAM_model'] = 'Costly_vac_creation'
+settings['SAM_model_variant'] = 'simple'
+ss_costly = ss_calib('Partial_calib', settings)
+
+settings['SAM_model'] = 'Costly_vac_creation'
+settings['SAM_model_variant'] = 'FR'
+ss_costly_FR = ss_calib('Partial_calib', settings)
+
+ttt = np.arange(0,Time)
+
+tvar = {'time' : ttt ,'q' : ss_standard['q'] + dMat_standard['q']} 
+td_q_standard =   EGMhousehold.td(ss_standard, returnindividual = False, monotonic=False, **tvar)
+tvar = {'time' : ttt ,'q' : ss_costly['q'] + dMat_costly_vac['q']} 
+td_q_costly_vac =   EGMhousehold.td(ss_costly, returnindividual = False, monotonic=False, **tvar)
+tvar = {'time' : ttt ,'q' : ss_costly_FR['q'] + dMat_costly_vac_FR['q']} 
+td_q_costly_vac_FR =   EGMhousehold.td(ss_costly_FR, returnindividual = False, monotonic=False, **tvar)
+
+
+#%%
+
+dC_standard = (td_q_standard['C']/ss_standard['C']-1)*100
+dC_costly_vac = (td_q_costly_vac['C']/ss_costly['C']-1)*100
+dC_costly_vac_FR = (td_q_costly_vac_FR['C']/ss_costly_FR['C']-1)*100
+
+dA_standard = (td_q_standard['A']/ss_standard['A']-1)*100
+dA_costly_vac = (td_q_costly_vac['A']/ss_costly['A']-1)*100
+dA_costly_vac_FR = (td_q_costly_vac_FR['A']/ss_costly_FR['A']-1)*100
+
+pylab.rcParams.update(params)
+fig, ((ax1,ax2)) = plt.subplots(1, 2)
+
+plot_hori = 30   
+
+ax1.plot(np.zeros(plot_hori),  linestyle='--', linewidth=1, color='black')
+ax2.plot(np.zeros(plot_hori),  linestyle='--', linewidth=1, color='black')
+
+ax1.plot(dC_standard[:plot_hori], label = 'Standard')
+ax1.plot(dC_costly_vac[:plot_hori], label = 'Sunk Cost - simple')
+ax1.plot(dC_costly_vac_FR[:plot_hori], label = 'Sunk Cost - FR', color = 'Darkgreen')
+ax1.set_xlabel('quarters')
+ax1.set_ylabel('Pct. Deviation from SS')
+ax1.legend() 
+ax1.set_title('Consumption')
+ax2.set_title('Assets')
+
+ax2.plot(dA_standard[:plot_hori], label = 'Standard')
+ax2.plot(dA_costly_vac[:plot_hori], label = 'Sunk Cost - simple')
+ax2.plot(dA_costly_vac_FR[:plot_hori], label = 'Sunk Cost - FR', color = 'Darkgreen')
+ax2.set_xlabel('quarters')
+ax2.set_ylabel('Pct. Deviation from SS')
+plt.gcf().set_size_inches(5*1.6, 2*1.6) 
+#plt.savefig('plots/Labor_market/dC_dq_partial.pdf')
+
+fig.tight_layout()
+
+
+#%% General Equilibrium 
+
+# the shock
+Time = 300   
+Ivar = 'mup'
+
+rhos = 0.6
+dZ =  0.1 *ss[Ivar] * rhos**(np.arange(Time))
+
+exogenous = [Ivar]  
+unknowns = ['L', 'mc']
+targets = ['Asset_mkt', 'Labor_mkt']
+
+settings['SAM_model'] = 'Standard'
+ss_standard = ss_calib('Partial_calib', settings)   
+dividend, LM, goods_mkt_clearing = Choose_LM(settings)
+block_list = [LM, Asset_block_T, prod_stuff, Asset_mkt_clearing2, goods_mkt_clearing, Labor_mkt_clearing] 
+G_jac = jac.get_G(block_list, exogenous, unknowns, targets,  Time, ss_standard, save=False)
+dMat_standard = FigUtils.Shock_mult(G_jac, dZ, Ivar)
+
+
+settings['SAM_model'] = 'Costly_vac_creation'
+settings['SAM_model_variant'] = 'simple'
+ss_costly = ss_calib('Partial_calib', settings)
+dividend, LM, goods_mkt_clearing = Choose_LM(settings)
+block_list = [LM, Asset_block_T, prod_stuff, Asset_mkt_clearing2, goods_mkt_clearing, Labor_mkt_clearing] 
+G_jac = jac.get_G(block_list, exogenous, unknowns, targets,  Time, ss_costly, save=False)
+dMat_costly_vac = FigUtils.Shock_mult(G_jac, dZ, Ivar)
+
+
+settings['SAM_model'] = 'Costly_vac_creation'
+settings['SAM_model_variant'] = 'FR'
+ss_costly_FR = ss_calib('Partial_calib', settings)
+dividend, LM, goods_mkt_clearing = Choose_LM(settings)
+block_list = [LM, Asset_block_T, prod_stuff, Asset_mkt_clearing2, goods_mkt_clearing, Labor_mkt_clearing] 
+G_jac = jac.get_G(block_list, exogenous, unknowns, targets,  Time, ss_costly_FR, save=False)
+dMat_costly_vac_FR = FigUtils.Shock_mult(G_jac, dZ, Ivar)
+
+
+#%%
+
+
+pylab.rcParams.update(params)
+fig, ((ax1, ax2, ax3)) = plt.subplots(1, 3)
+plot_hori = 30 
+
+ax1.plot(100 * dMat_standard['N'][:plot_hori]/ss['N'], label = 'Standard')
+ax1.plot(100 * dMat_costly_vac['N'][:plot_hori]/ss_costly['N'], label = 'Sunk Cost - simple')
+ax1.plot(100 * dMat_costly_vac_FR['N'][:plot_hori]/ss_costly_FR['N'], label = 'Sunk Cost - FR', color = 'Darkgreen')
+ax1.legend() 
+ax1.set_title('Employment')
+plt.gcf().set_size_inches(7*1.3, 2*1.3) 
+
+
+ax1.plot(np.zeros(plot_hori),  linestyle='--', linewidth=1, color='black')
+ax2.plot(np.zeros(plot_hori),  linestyle='--', linewidth=1, color='black')
+ax3.plot(np.zeros(plot_hori),  linestyle='--', linewidth=1, color='black')
+
+
+ax2.plot(100 * dMat_standard['V'][:plot_hori]/ss['V'], label = 'Standard')
+ax2.plot(100 * dMat_costly_vac['V'][:plot_hori]/ss_costly['V'], label = 'Sunk Cost - simple')
+ax2.plot(100 * dMat_costly_vac_FR['V'][:plot_hori]/ss_costly_FR['V'], label = 'Sunk Cost - FR', color = 'Darkgreen')
+ax2.set_title('Vacancies')
+
+ax3.plot(100 * dMat_standard['q'][:plot_hori]/ss['q'], label = 'Standard')
+ax3.plot(100 * dMat_costly_vac['q'][:plot_hori]/ss_costly['q'], label = 'Sunk Cost- simple')
+ax3.plot(100 * dMat_costly_vac_FR['q'][:plot_hori]/ss_costly_FR['q'], label = 'Sunk Cost - FR', color = 'Darkgreen')
+ax3.set_title('Job-finding rate')
+ax1.legend(loc='best',prop={'size': 6})
+
+ax1.set_xlabel('quarters')
+ax1.set_ylabel('Pct. Deviation from SS')
+ax2.set_xlabel('quarters')
+ax2.set_ylabel('Pct. Deviation from SS')
+ax3.set_xlabel('quarters')
+ax3.set_ylabel('Pct. Deviation from SS')
+fig.tight_layout()
+
+#plt.savefig('plots/Labor_market/N_v_Q_general_Eq.pdf')
+#plt.savefig('plots/Labor_market/N_v_Q_general_Eq_capital_adjustment_costs.pdf')
+
+
+#%%
+HHblock = EGMhousehold
+dMat_alt = FigUtils.Shock_mult(G_jac, dZ, Ivar)
+tplotl = 60 
+plot_simple = False
+
+
+#dMat_alt['ra'] = dMat_alt['r']
+
+fig = FigUtils.C_decomp(ss, dMat, tplotl, Time, HHblock, plot_simple, 'CTD')
+#plt.rcParams.update({'axes.titlesize': 'x-large'})
+#plt.rcParams.update({'axes.labelsize': 'small'})
+#plt.rcParams.update({'xtick.labelsize': 'xx-small', 'ytick.labelsize': 'xx-small'})
+#plt.savefig('plots/calibration/C_decomp_main_T.pdf') 
+
+#plt.savefig('plots/calibration/C_decomp_main_G.pdf') 
+plt.show()
+
+#%%
+    CVAR = 'CTD'
+    ttt = np.arange(0,Time)
+    str_lst = ['w', 'q', 'N']
+    xlist   = ['P', 'Ttd', 'ra', 'Tuni']
+    for k in xlist:
+        if k in dMat:   
+            str_lst.append(k)
+
+    if ss['incidence']:
+        str_lst.append('Y')
+    
+
+    shocks       = {}
+
+    for x in str_lst:
+        if x != 'P':
+            shocks[x]       =  ss[x]     + dMat[x] 
+
+    pylab.rcParams.update(params)
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+        
+    C_decomp       = {}
+    
+    markers=[',', '+', '-', '.', 'o', '*']
+    i = 0 
+    
+    #plot_simple = False
+    tvar       = {'time' : ttt}
+    for j in shocks:
+        tvar[j]       =shocks[j]
+        
+    td_HH       =   HHblock.td(ss,       returnindividual = True, monotonic=False, **tvar)    
+#%%
+
+    dN = ss['N'] + dMat['N']
+    Dtd = N_mult('D', ss, td_HH, dN)
+    
+    C_alt = utils.fast_aggregate(Dtd, td_HH['c'])
+
+    dC_tot       = 100* dMat[CVAR] / ss[CVAR]
+
+    dccc = (C_alt/ss['C']-1)*100
+    dccc1 = (td_HH['C']/ss['C']-1)*100
+
+    print(dC_tot[0], dccc[0])
+        
+    plt.plot(dC_tot[:30])
+    plt.plot(dccc[:30])
+    plt.show()
+
+
+#%%
+New_ss = ss.copy()
+New_ss.update({'b' : ss['b'] * 0.5})
+
+ss_HH =   EGMhousehold.ss(**New_ss)
+
+for key in ss_HH.keys():
+    New_ss.update({key : ss_HH[key]})
+
+
+
+
+#%%
+
+pylab.rcParams.update(params)
+tim = 30
+fig, ((ax1, ax2)) = plt.subplots(1,2)
+tplotl = 30 
+    
+ax1.plot(dMat['B'][:tim] * 100 / ss['B'], label = 'Bonds')
+ax1.plot(dMat['p'][:tim] * 100 / ss['p'], label = 'Firm Equity')
+ax1.plot(dMat['A'][:tim] * 100 / ss['A'], label = 'Assets')
+ax1.plot(np.zeros(tim),  linestyle='--', linewidth=1, color='black')
+ax1.plot(np.zeros(tim),  linestyle='--', linewidth=1, color='black')
+ax2.plot(np.zeros(tim),  linestyle='--', linewidth=1, color='black')
+ax1.legend(loc = 'upper right'  )
+
+ax2.plot(dMat['uT'][:tim] * 100 / ss['w'])
+
+
+ax1.set_title('Assets')
+ax1.set_xlabel('quarters')
+ax1.set_ylabel('Pct.')
+
+ax2.set_title('Transfers')
+ax2.set_xlabel('quarters')
+ax2.set_ylabel('Pct. of wages')
+
+
+
+plt.gcf().set_size_inches(7,2.5) 
+plt.rcParams.update({'axes.titlesize': 'x-large'})
+plt.rcParams.update({'axes.labelsize': 'small'})
+plt.rcParams.update({'xtick.labelsize': 'xx-small', 'ytick.labelsize': 'xx-small'})
+fig.tight_layout()  
+plt.savefig('plots/calibration/Assets_transfers.pdf') 
+plt.show()
+
+plt.show()
+
+
+#%%
+
+HHblock = EGMhousehold
+tplotl = 60
+fig_ineq = FigUtils.Inequality_plots(ss, 60, Time, dMat, HHblock) 
+#plt.savefig('plots/calibration/markup_shock_inequality.pdf') 
+plt.show()
+
+
+#%%
+
+shock_title = 'shock'
+tplotl = 300 
+Time = tplotl 
+Ivar = 'mup'
+rhos = 0.6
+dZ =  0.1 * ss[Ivar] * rhos**(np.arange(Time))
+FigUtils.linear_non_linear_calc(ss, block_list, unknowns, targets, Ivar, dZ, shock_title, Time, tplotl)
+
+
+#%% Permanent negative benefits shock 
+
+
+# @simple 
+# def MutFund(B, A, r, ra, rk, K, delta, rstar):
+#     MF_Div =  ( (1+rk - delta) * K(-1)  +  (1  + r) * B(-1))/ A(-1) - (1+r)
+#     ra_res = ra - (r + MF_Div )
+#     return   ra_res
+
+
+# @simple 
+# def fiscal_exp1(b, re, G, B, N, lumpsum_T, UINCAGG, Ttd, P, r): 
+#     uT  = Ttd
+#     G_exp = G + (1 - N) * UINCAGG + (lumpsum_T + uT)  +  B(-1) * (1+r) / P(-1)
+#     return G_exp, uT
+
+
+# #EGMhousehold
+# Asset_block = solved(block_list=[MutFund, fiscal_rev, fiscal_exp1, B_res, dividend, EGMhousehold, arbitrage],
+#                 unknowns=[ 'Ttd', 'ra', 'MF_Div'],
+#                 targets=[  'B_res', 'ra_res', 'MF_Div_Res' ] )   
+
+#block_list = [LM,   Asset_block, prod_stuff, Asset_mkt_clearing2, goods_mkt_clearing,  Labor_mkt_clearing, Prices   ] 
+
+# prod_stuff = solved(block_list=[monetary1, pricing, ProdFunc, firm1],
+#                 unknowns=[ 'mc', 'Y'],
+#                 targets=[  'nkpc' , 'ProdFunc_Res' ] )  
+# Asset_block2 = solved(block_list=[ fiscal_rev, fiscal_exp, B_res, dividend, EGMhousehold,  arbitrage, MutFund,  Tuni_rate, unempbenefits, aggregate],
+#                 unknowns=[ 'uT',  'ra'],
+#                 targets=[  'B_res','MF_Div_res'] )   
+
+# prod_stuff1 = solved(block_list=[monetary1, pricing, ProdFunc, firm1],
+#                 unknowns=[ 'mc', 'Y'],
+#                 targets=[  'nkpc' , 'ProdFunc_Res' ] )  
+
+
+block_list = [LM, Asset_block_only_T, prod_stuff, Asset_mkt_clearing2, goods_mkt_clearing,  Labor_mkt_clearing] 
+
+
+Time = 400   
+exogenous = ['b'] 
+G_jac = jac.get_G(block_list, exogenous, unknowns, targets,  Time, ss, save=True)
+
+H_U_cur = jac.get_H_U(block_list, unknowns, targets, Time, ss, use_saved=True)
+_, s, _ = np.linalg.svd(H_U_cur)
+print('Singular value ratio', s[-1] / s[-2] )
+print(f'Smallest singular values: {s[-3]:.4f}, {s[-2]:.4f}, {s[-1]:.4f}')
+
+#%%
+
+Ivar = 'b'
+db = np.empty([Time])
+db[:] = 0.5 *ss['b']* 0.95 ** (np.arange(Time))   - 0.5 * ss['b']
+
+# Plot transitional dynamics 
+
+dMat = {}
+for i in G_jac.keys():
+    if Ivar in G_jac[i]:
+        dMat[i] = G_jac[i][Ivar] @ db
+
+tplotl = 300
+fig = FigUtils.FigPlot3x3(ss, dMat, Ivar, tplotl, db)
+#plt.savefig('plots/lower_b/transition_to_new_ss.pdf')
+plt.show() 
+
+
+#%%
+
+
+from Misc import Models
+Time = 400 
+Ivar = 'b'
+db = np.empty([Time])
+db[:] = 0 
+db[10:] = 0.5 *ss['b']* 0.95 ** (np.arange(Time-10))   - 0.5 * ss['b']
+New_ss, fig = Models.New_LR_SS(ss, db, Ivar, Time, 'T', Time-100, EGMhousehold)
+
+
+
+#%%
+
+New_ss_temp = {}
+t_terminal = Time-100 # Assume new steady state reached at t = 200 
+for i in dMat.keys():
+    if i in ss:
+        New_ss_temp[i] = dMat[i][t_terminal] + ss[i]
+
+New_ss_temp[Ivar] = ss[Ivar] + db[t_terminal]
+
+#for key in ss.keys():
+#    if key not in New_ss.keys():
+#        New_ss[key] = ss[key]
+
+New_ss =  ss.copy()
+for key in New_ss_temp.keys():
+    New_ss[key] = New_ss_temp[key]  
+del New_ss_temp
+
+fig = FigUtils.FigPlot3x3_ss(New_ss, ss, dMat, Ivar, tplotl, db)
+
+
+#%%
+# Non-linear solver 
+Time = 400 
+Ivar = 'b'
+block_list = [LM, Asset_block_only_T, prod_stuff, Asset_mkt_clearing2, goods_mkt_clearing, Labor_mkt_clearing] 
+G_jac = jac.get_G(block_list, exogenous, unknowns, targets,  Time, ss, save=True)
+H_U = jac.get_H_U(block_list, unknowns, targets, Time, ss, use_saved = True)
+H_U_factored = utils.factor(H_U)
+
+db = np.empty([Time])
+db[:] = 0 
+db[10:] = 0.5 *ss['b']* 0.95 ** (np.arange(Time-10))   - 0.5 * ss['b']
+td_nonlin = nonlinear.td_solve(ss, block_list, unknowns, targets, H_U_factored=H_U_factored, b = ss['b'] + db)
+
+tplotl = 250
+dMat     = FigUtils.Shock_mult(G_jac, db, Ivar)
+
+dMat_new = {}
+for i in td_nonlin.keys():
+    if i in ss:
+        dMat_new[i] = td_nonlin[i] - ss[i]
+        
+
+tplotl = 250 
+desc = ['Linear', 'Non-linear']
+shock_title = 'Unemployment Benefits'
+FigUtils.FigPlot3x3_compare(ss, dMat, ss, dMat_new, Ivar, tplotl, db, desc, shock_title, 'C_agg')
+#plt.savefig('plots/lower_b/transition_to_new_ss_non_linear_comp.pdf')
+plt.show() 
+
+
+t_terminal = Time-300
+New_ss =  ss.copy()
+for key in td_nonlin.keys():
+    New_ss[key] = td_nonlin[key][t_terminal]  
+
+
+New_ss.update({'ssflag' : True})
+ss_HH =   EGMhousehold.ss(**New_ss)
+New_ss.update({'ssflag' : False})
+
+for key in ss_HH.keys():
+    New_ss.update({key : ss_HH[key]})
+del ss_HH 
+
+np.savez('New_SS_nonlin', x = New_ss)
+
+
+#%% Do shocks 
+    
+New_ss = ss.copy()
+New_ss.update({'b' : ss['b'] * 0.5})
+
+with open('tax_function/cs_avg.pickle', 'rb') as f:
+    cs_avg = pickle.load(f)
+
+
+U_inc, U_inc_agg  = Unemp_benefit(New_ss['Benefit_type'], New_ss['b'], New_ss['e_grid'], New_ss['pi_ern'], New_ss['pi_ern'].size, New_ss['w']) 
+ssAvgInc = New_ss['N'] * New_ss['w']   + (1-New_ss['N']) * U_inc_agg
+tax_S =  (1-New_ss['N'])        * np.vdot(avgTaxf(U_inc, ssAvgInc, cs_avg)   * U_inc, New_ss['pi_ern']) 
+
+
+G_rev = ss['TAXN'] + tax_S  + New_ss['B'] + New_ss['T_firms']  
+G_exp = New_ss['G'] + (1-New_ss['N']) * U_inc_agg + ss['Tss'] + New_ss['B'] * (1 + New_ss['r'])   
+
+Tss = G_rev - G_exp
+
+G_rev = ss['TAXN'] + tax_S  + New_ss['B'] + New_ss['T_firms']  
+G_exp = New_ss['G'] + (1-New_ss['N']) * U_inc_agg + Tss + New_ss['B'] * (1 + New_ss['r'])  
+
+
+New_ss.update({'G_rev' : G_rev, 'G_exp' : G_exp, 'Tss' : Tss, 'Tuni' : Tss})
+
+
+ss_HH =   EGMhousehold.ss(**New_ss)
+
+for key in ss_HH.keys():
+    New_ss.update({key : ss_HH[key]})
+
+
+
+#%%
+
+New_ss = ss.copy()
+New_ss.update({'b' : ss['b'] * 0.5})
+
+ss_HH =   EGMhousehold.ss(**New_ss)
+
+for key in ss_HH.keys():
+    New_ss.update({key : ss_HH[key]})
+
+# Asset_block = solved(block_list=[ fiscal_rev, fiscal_exp, B_res, dividend, EGMhousehold,  arbitrage, MutFund,  Tuni_rate, unempbenefits, Fiscal_stab_G],
+#                 unknowns=[ 'B',  'ra'],
+#                 targets=[  'B_res','MF_Div_res'] )  
+# Asset_block1 = solved(block_list=[ fiscal_rev, fiscal_exp, B_res, dividend, EGMhousehold,  arbitrage, MutFund,  Tuni_rate, unempbenefits, Fiscal_stab_T],
+#                 unknowns=[ 'B',  'ra'],
+#                 targets=[  'B_res','MF_Div_res'] )  
+
+block_list = [LM,  Asset_block_T, prod_stuff, Asset_mkt_clearing2, goods_mkt_clearing,  Labor_mkt_clearing ] 
+
+Ivar = 'mup'
+exogenous = [Ivar]
+G_jac = jac.get_G(block_list, exogenous, unknowns, targets,  Time, ss, save=False)
+G_jac_lower_b = jac.get_G(block_list, exogenous, unknowns, targets,  Time, New_ss, save=False)
+
+
+rho = 0.6
+dZ = 0.1 *ss[Ivar] * rho ** (np.arange(Time))
+
+dMat         = FigUtils.Shock_mult(G_jac, dZ, Ivar)
+dMat_lower_b = FigUtils.Shock_mult(G_jac_lower_b, dZ, Ivar)
+
+
+# Asset_block_G = solved(block_list=[ fiscal_rev, fiscal_exp, B_res, dividend, EGMhousehold,  arbitrage, MutFund, Tuni_rate],
+#                 unknowns=[ 'B' , 'ra'],
+#                 targets=[ 'B_res', 'MF_Div_res'] )   
+# block_list1 = [LM,  Asset_block_G, prod_stuff, Asset_mkt_clearing2, goods_mkt_clearing,  Labor_mkt_clearing ] 
+
+# G_jac_dG = jac.get_G(block_list1, ['G'] , unknowns,  ['asset_mkt', 'Labor_mkt'],  Time, New_ss, save=False)
+
+# dG =  dMat['G'] - dMat_lower_b1['G'] 
+
+# dMat_lower_b = {}
+# for k in dMat_lower_b1:
+#     if k == 'G':
+#         dMat_lower_b[k] =  dMat_lower_b1[k]  +  dG
+#     elif k == 'B':
+#         dMat_lower_b[k] =  dMat_lower_b1[k]
+#     elif k == 'goods_mkt':
+#         dMat_lower_b[k] =  dMat_lower_b1[k]        
+        
+#     else:
+#         dMat_lower_b[k] =  dMat_lower_b1[k]  + G_jac_dG[k]['G'] @ dG
+
+t_terminal = 150
+New_ss1 =  New_ss.copy()
+for key in dMat_lower_b.keys():
+    if key in New_ss:
+        New_ss1[key] = New_ss[key] + dMat_lower_b[key][t_terminal]  
+
+
+tplotl = 30
+desc = ['Baseline', 'Lower benefits']
+shock_title = 'Productivity'
+fig = FigUtils.FigPlot3x3_compare(ss, dMat, New_ss1, dMat_lower_b, Ivar, tplotl, dZ, desc, shock_title, 'C_agg')
+#fig.savefig('plots/lower_b/main_result_comparison_T.pdf')
+#fig.savefig('plots/lower_b/main_result_comparison_G.pdf')
+plt.show()
+
+#%%
+
+block_list = [LM,  Asset_block_T, prod_stuff, Asset_mkt_clearing2, goods_mkt_clearing,  Labor_mkt_clearing ] 
+
+exogenous = ['b']
+G_jac_lower_b1 = jac.get_G(block_list, exogenous, unknowns, targets,  Time, ss, save=False)
+
+rho = 0.8
+db = - 0.5 *ss[Ivar] * rho ** (np.arange(Time))
+
+
+
+dMat_lower_b         = FigUtils.Shock_mult(G_jac_lower_b1, db, 'b')
+dMat_new = {}
+for k in dMat:
+    if k not in dMat_lower_b:
+        dMat_new[k] = dMat[k]        
+    else:
+        dMat_new[k] = dMat_lower_b[k] + dMat[k]
+
+tplotl = 30
+desc = ['Baseline', 'Lower benefits']
+shock_title = 'Productivity'
+fig = FigUtils.FigPlot3x3_compare(ss, dMat, ss, dMat_new, Ivar, tplotl, dZ, desc, shock_title, 'C_agg')
+#fig.savefig('plots/lower_b/main_result_comparison_T_inclu_transitional.pdf')
+#fig.savefig('plots/lower_b/main_result_comparison_G.pdf')
+plt.show()
+
+
+#%% dA Hist
+
+    from scipy.stats import binned_statistic
+    
+    A_N, A_U = N_specific_var('a', ss)
+    A_N_new, A_U_new = N_specific_var('a', New_ss)
+    C_N, C_U = N_specific_var('Inc', ss)
+    
+    dA_N = ((A_N_new-A_N)/C_N)*100
+    dA_U = ((A_U_new-A_U)/C_U)*100
+    
+    nbins = 40
+    plot_a_max  = 8
+    bin_means, left_edge, right_edge = binned_statistic(A_N.flatten(), dA_N.flatten(), bins=nbins, range=(ss['a_grid'][0], plot_a_max)) 
+
+    pylab.rcParams.update(params)
+    fig, ax1 = plt.subplots()
+    
+    
+    #ax2.bar(a_binned, C_binned,  color = 'grey', edgecolor  = 'black')    
+    pylab.rcParams.update(params)
+    #ax2 = ax1.twinx()
+    #ax2.plot(ss['a_grid'], q_el)
+    ax1.bar(left_edge[:-1], bin_means,  color = 'orange', edgecolor  = 'black', alpha = 0.5, width = (plot_a_max-ss['a_grid'][0]) / nbins, label = 'Employed')  
+    bin_means, left_edge, right_edge = binned_statistic(A_U.flatten(), dA_U.flatten(), bins=nbins, range=(ss['a_grid'][0], plot_a_max)) 
+    ax1.bar(left_edge[:-1], bin_means,  color = 'grey', edgecolor  = 'black', alpha = 0.5, width = (plot_a_max-ss['a_grid'][0]) / nbins, label = 'Unemployed')  
+
+    ax1.legend(loc='best',prop={'size': 10})
+    ax1.set_xlabel('Steady-state Assets')
+    ax1.set_ylabel('Change in A as fraction of Income') 
+    ax1.set_ylim([-50,20])
+    
+    plt.gcf().set_size_inches(7/1.3, 5/1.3) 
+    plt.rcParams.update({'axes.titlesize': 'x-large'})
+    plt.rcParams.update({'axes.labelsize': 'small'})
+    plt.rcParams.update({'xtick.labelsize': 'xx-small', 'ytick.labelsize': 'xx-small'})
+    fig.tight_layout()
+    fig.savefig('plots/lower_b/dA.pdf')
+
+
+
+#%%
+
+
+fig = FigUtils.C_decomp_compare(ss, New_ss, dMat, dMat_lower_b, 60, Time, EGMhousehold, 'CTD')
+#fig.savefig('plots/lower_b/main_result_C_decomp_T.pdf')
+#fig.savefig('plots/lower_b/main_result_C_decomp_transtional.pdf')
+
+
+
+#%%
+fig =  FigUtils.C_decomp_compare_N_vs_U(ss, New_ss, dMat, dMat_lower_b, tplotl, Time, HHblock)
+#fig.savefig('plots/lower_b/main_result_C_decomp_N_U_G.pdf')
+#fig.savefig('plots/lower_b/main_result_C_decomp_N_U_T.pdf')
+
+# Compare whether non-linearities matter 
+# linear_non_linear_calc(ss, block_list, unknowns, targets, Ivar, dZ, shock_title)
+
+#%%
+
+
+#fig_ineq = FigUtils.Inequality_plots_compare(ss, New_ss, tplotl, Time, dMat, dMat_lower_b, EGMhousehold )
+#fig_ineq.savefig('plots/lower_b/agg_inequality_lower_b_T.pdf')
+
+
+#fig_ineq = FigUtils.Inequality_plots_compare(ss, ss, tplotl, Time, dMat, dMat_new, EGMhousehold )
+#fig_ineq.savefig('plots/lower_b/agg_inequality_lower_b_T_transtional.pdf')
+
+
+    #%% lifetime consumption equiv. weflare 
+  
+    # transtiional dynamics 
+    ft = Time 
+    ttt = np.arange(0,Time)
+    
+
+    td, str_lst, tvar_orgshock = FigUtils.return_indi_HH(ss, dMat, Time, EGMhousehold)
+
+
+    D      = ss['D']
+    A_dist = ss['a']
+
+    
+    # Wealth Distributional statistics
+    nPoints = ss['nPoints']
+
+
+    beta_full = np.reshape(np.broadcast_to(ss['beta'][np.newaxis, :, np.newaxis, np.newaxis], (ft, nPoints[0], nPoints[1], nPoints[2])), (ft, nPoints[0] * nPoints[1], nPoints[2]))       
+    tt = np.reshape(np.broadcast_to(np.arange(ft)[:, np.newaxis, np.newaxis, np.newaxis], (ft, nPoints[0], nPoints[1], nPoints[2])), (ft, nPoints[0] * nPoints[1], nPoints[2]))    
+    dN = ss['N'] + G_jac['N'][Ivar] @ dZ
+    Dtd = N_mult('D', ss, td, dN)
+    
+
+    Dss = ss['D']
+    c_trans = td['c']
+    css    = ss['c']
+    Atd = td['a']
+    N = ss['N']
+
+    deciles = create_deciles_index(ss['a'], ss['D'], ss['a'].flatten())
+    numer_percs = len(deciles) 
+    beta_full = np.reshape(np.broadcast_to(ss['beta'][np.newaxis, :, np.newaxis, np.newaxis, np.newaxis], (ft, nPoints[0], nPoints[1], 2, nPoints[2])), (ft, nPoints[0] * nPoints[1], 2, nPoints[2]))    
+
+    
+    cons_equiv_agg = np.empty([numer_percs]) 
+    peak_dC  = np.empty([numer_percs]) 
+    peakdC_index = np.empty([numer_percs])  
+    dec = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+    for j in range(numer_percs): 
+        cons_equiv_agg[j], peak_dC[j], peakdC_index[j] = FigUtils.C_equiv(ss, css, c_trans, Dss, Dtd, deciles[j], beta_full)
+        
+        
+    print(100 * cons_equiv_agg)  
+
+    #%%
+
+    aN, aS = N_specific_var('a', ss)
+
+    decilesN = create_deciles_index(ss['a'], ss['D'], aN.flatten())
+
+    decilesU = create_deciles_index(ss['a'], ss['D'], aS.flatten())
+    
+#%%
+
+    aN = aN.flatten() 
+    aS = aS.flatten() 
+    DN,DS = N_specific_var('D', ss)
+    DN = DN.flatten()
+    DS = DS.flatten()
+    decspec = 1
+    
+    tempDN = DN[decilesN[decspec]]
+    tempDU = DS[decilesU[decspec]]
+    
+    scN = np.nonzero(aN[decilesN[decspec]]  <  0)
+    scS = np.nonzero(aS[decilesU[decspec]] <  0)
+    
+    shareN = 100 * sum( tempDN[scN] ) / sum( DN[decilesN[decspec]] ) 
+    print(shareN)
+    
+
+    shareU = 100 * sum( tempDU[scS] ) / sum( DS[decilesU[decspec]] ) 
+    print(shareU)    
+    
+    
+    #%%decomposed dC by employment status 
+    
+        
+    
+    c_peak_decomped = FigUtils.dC_decomp_p0(css, ss, dec, A, Atd, str_lst, deciles, tvar_orgshock, dMat, EGMhousehold)
+    dc_decomped_N, dc_decomped_U = FigUtils.C_decomp_peak_change_by_N(css, ss, dec, A, Atd, str_lst, deciles, peakdC_index, tvar_orgshock, dMat, EGMhousehold)
+
+    fig = FigUtils.dC_decomp_and_C_deciles(c_peak_decomped, ss)
+    plt.savefig('plots/C_analysis/peak_c_by_decile.pdf')    
+    
+    
+    
+#%%
+    fig = FigUtils.dC_decomp_by_N(dc_decomped_N, dc_decomped_U, ss)
+    plt.savefig('plots/C_analysis/dc_by_decile_decomp_by_N.pdf')   
+#%%
+
+    cons_equiv_N, cons_equiv_U = FigUtils.Welfare_equiv_by_N(ss, td)
+    axzero = True
+    fig = FigUtils.Welfare_equiv_by_N_Fig(ss, cons_equiv_N, cons_equiv_U, axzero)
+    #plt.savefig('plots/C_analysis/C_equiv_by_N.pdf') 
+    
+    
+#%% Welfare changes by wealth, earnings and employment 
+
+    # e_low = 5-1
+    # e_mid  = 6-1
+    # e_high = 7-1
+    # e_list = [e_low, e_mid, e_high]
+    # cons_equiv_eN, cons_equiv_eU = FigUtils.C_equiv_by_e_N_calc(e_list, ss, td, dMat, C_equiv)
+    
+    # fig = FigUtils.Welfare_equiv_by_N_e(ss, e_list, cons_equiv_eN, cons_equiv_eU, find_perc_in_dist)
+    # #plt.savefig('plots/C_analysis/C_equiv_by_e_N.pdf')    
+    # plt.show()       
+     
+
+#%%
+
+
+    x_dec = [*range(1, 11, 1)] 
+    barWidth = 0.25
+
+    r1 = np.arange(len(deciles))
+    r2 = [x + barWidth for x in r1]
+    r3 = [x + barWidth for x in r2]
+    
+    
+    fig = plt.figure()
+    ax1 = fig.add_subplot(111)
+    ax1.set_xticks(np.arange(len(x_dec)+1))
+    ax1.bar(r1, 100 *cons_equiv_agg, width = barWidth, label ='AGG')
+    ax1.bar(r2, 100 *cons_equiv_N, width = barWidth, label ='N')
+    ax1.bar(r3, 100 *cons_equiv_U, width = barWidth, label ='U', color = 'darkgreen')
+    plt.xlabel('Wealth Decile')
+    plt.ylabel('Pct. of steady-state Consumption')  
+    plt.tight_layout()
+    #plt.savefig('plots/C_analysis/C_by_deciles.pdf')    
+    plt.legend()
+    plt.show()    
+
+    pylab.rcParams.update(params)
+    fig, ((ax1, ax2)) = plt.subplots(1,2)
+    ax1.set_xticks(np.arange(len(x_dec)+1))
+    ax2.set_xticks(np.arange(len(x_dec)+1))
+    ax1.bar(x_dec, 100 *cons_equiv_N, width = barWidth, label ='N')
+    ax1.plot(x_dec, np.zeros(10)+np.average(100 *cons_equiv_N),  linestyle='--', linewidth=1, color='black')
+    ax2.plot(x_dec, np.zeros(10)+np.average(100 *cons_equiv_U),  linestyle='--', linewidth=1, color='black')
+    ax1.plot(x_dec, np.zeros(10),  linestyle='-', linewidth=1, color='black')
+    ax2.plot(x_dec, np.zeros(10),  linestyle='-', linewidth=1, color='black')
+    
+    ax2.bar(x_dec, 100 *cons_equiv_U, width = barWidth, label ='U')    
+    ax1.set_xlabel('Wealth Decile')
+    ax1.set_ylabel('Pct. of steady-state Consumption')  
+    ax2.set_xlabel('Wealth Decile')
+    ax2.set_ylabel('Pct. of steady-state Consumption')      
+    plt.tight_layout()
+    plt.gcf().set_size_inches(7, 5) 
+    plt.rcParams.update({'axes.titlesize': 'x-large'})
+    plt.rcParams.update({'axes.labelsize': 'small'})
+    plt.rcParams.update({'xtick.labelsize': 'xx-small', 'ytick.labelsize': 'xx-small'})    
+    #plt.savefig('plots/C_analysis/C_by_deciles.pdf')    
+    #plt.legend()
+    plt.show()      
+
+
+#%%   Welfare compare
+
+    
+    td_lower_b_ind, _,_ = FigUtils.return_indi_HH(New_ss, dMat_lower_b, Time, EGMhousehold)
+    cons_equiv_N_lower_b, cons_equiv_U_lower_b = FigUtils.Welfare_equiv_by_N(New_ss, td_lower_b_ind)
+    plot_mono = False
+    FigUtils.Welfare_equiv_by_N_Fig(New_ss, cons_equiv_N_lower_b, cons_equiv_U_lower_b)
+    
+    
+    
+    #%%
+
+    diff_N = cons_equiv_N_lower_b - cons_equiv_N
+    diff_U = cons_equiv_U_lower_b - cons_equiv_U
+
+
+    axzero = False
+    fig1 = FigUtils.Welfare_equiv_by_N_Fig(ss, diff_N, diff_U, axzero)
+    fig1.savefig('plots/lower_b/equiv_welfare.pdf')    
+    
+
+    
+  
+#%% Consumption Decomposition 
+
+    ttt = np.arange(0,Time)
+    
+    str_lst = ['w', 'ra', 'q', 'N']
+    shocks       = {}
+    shocks_low_b = {}
+    for x in str_lst:
+        shocks[x]       =  ss[x]     + dMat[x] 
+        shocks_low_b[x] =  New_ss[x] + dMat_lower_b[x] 
+        
+    hvar = 'C'
+    
+    C_decomp       = {}
+    C_decomp_low_b = {}
+    for j in shocks:
+        tvar       = {'time' : ttt, j : shocks[j]}
+        tvar_low_b = {'time' : ttt, j : shocks_low_b[j]}
+        td       =   EGMhousehold.td(ss,       returnindividual = False, monotonic=False, **tvar)    
+        C_decomp[j] = (td[hvar] / ss[hvar]) -1
+        td_low_b =   EGMhousehold.td(New_ss, returnindividual = False, monotonic=False, **tvar_low_b)  
+        C_decomp_low_b[j] = (td_low_b[hvar]  / New_ss[hvar]) -1
+        
+
+
+    pylab.rcParams.update(params)
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2)
+
+    
+    
+    tplotl = 60 
+    
+    scale_by_C = False
+    if scale_by_C:
+        dC_tot       =  dMat['C'] / ss['C']
+        dC_tot_low_b =  dMat_lower_b['C'] / New_ss['C']
+    else: 
+        dC_tot       = 1
+        dC_tot_low_b = 1
+        
+    dC_w   = 100 * C_decomp['w']  / dC_tot
+    dC_ra  = 100 * C_decomp['ra'] / dC_tot
+    dC_N   = 100 * C_decomp['N']  / dC_tot
+    dC_q   = 100 * C_decomp['q']  / dC_tot
+    dC_w_low_b   = 100 * C_decomp_low_b['w']  / dC_tot_low_b
+    dC_ra_low_b  = 100 * C_decomp_low_b['ra'] / dC_tot_low_b
+    dC_N_low_b   = 100 * C_decomp_low_b['N']  / dC_tot_low_b
+    dC_q_low_b   = 100 * C_decomp_low_b['q']  / dC_tot_low_b   
+    
+    ax1.plot(np.zeros(tplotl),  linestyle='--', linewidth=1, color='black')
+    ax1.plot( dC_w[:tplotl] , label='Baseline')
+    ax1.plot( dC_w_low_b[:tplotl] , label='Lower benefits')
+    ax1.set_title('Wages')
+    ax1.legend(loc='upper right')
+    ax1.set_xlabel('quarters')
+    ax1.set_ylabel('Pct. change in C') 
+    
+    ax2.plot(np.zeros(tplotl),  linestyle='--', linewidth=1, color='black')
+    ax2.plot( dC_ra[:tplotl])
+    ax2.plot( dC_ra_low_b[:tplotl] )
+    ax2.set_title('Real Interest rate')
+    ax2.set_xlabel('quarters')
+    ax2.set_ylabel('Pct. change in C') 
+
+    ax3.plot(np.zeros(tplotl),  linestyle='--', linewidth=1, color='black')
+    ax3.plot( dC_N[:tplotl])
+    ax3.plot( dC_N_low_b[:tplotl] )
+    ax3.set_title('Employment')
+    ax3.set_xlabel('quarters')
+    ax3.set_ylabel('Pct. change in C') 
+
+    ax4.plot(np.zeros(tplotl),  linestyle='--', linewidth=1, color='black')
+    ax4.plot( dC_q[:tplotl])
+    ax4.plot( dC_q_low_b[:tplotl] )
+    ax4.set_title('Finding Rate')
+    ax4.set_xlabel('quarters')
+    ax4.set_ylabel('Pct. change in C') 
+    
+    plt.gcf().set_size_inches(7, 5) 
+    plt.rcParams.update({'axes.titlesize': 'x-large'})
+    plt.rcParams.update({'axes.labelsize': 'small'})
+    plt.rcParams.update({'xtick.labelsize': 'xx-small', 'ytick.labelsize': 'xx-small'})
+    fig.tight_layout()
+    
+    #plt.savefig('plots/lower_b/C_decomp.pdf')
+    plt.show() 
+    
+    
+    # MPC_quarterly =( (1+ss['VAT']) *  G_jac['C']['Z'] @ dZ)/(G_jac['INCAGG']['Z'] @ dZ)
+    # plt.plot(  MPC_quarterly[:20])
+    # plt.show() 
+    # incc = 100 * G_jac['INCAGG']['Z'] @ dZ / ss['INCAGG']
+    # plt.plot(incc[:tplotl])
+    # plt.show() 
+    
+  #%%  
+HHblock =   EGMhousehold
+FigUtils.C_decomp_compare(ss, New_ss, dMat, dMat_lower_b, tplotl, Time, HHblock)
+
+
+
+
+     #%% HH MPCs in steady-state 
+    Time = 300  
+    rhos = np.array([0.6])
+    #dTuni = 0.01 *ss['w'] * rhos**(np.arange(Time)[:, np.newaxis])
+    dTuni = np.empty([Time])   
+    dTuni[:]  = 0
+    dTuni[0]  = 0.01 *ss['w'] 
+
+    
+    ttt = np.arange(0,Time)
+
+    tvar = {'time' : ttt ,'Tuni' : dTuni} 
+    td =   EGMhousehold.td(ss, returnindividual = True, monotonic=True, **tvar)
+
+
+    plt.plot(dTuni, label='linear', linestyle='-', linewidth=2.5)
+    plt.show()
+    plt.plot(100 * ((td['C'][0:40]/ss['C'])-1), label='linear', linestyle='-', linewidth=2.5)
+    plt.show()
+
+    
+    dINC = td['INC'][0]-ss['INC']
+    dCC =  (1+ss['VAT']) * (td['C'] - ss['C'])
+ 
+    
+    agg_MPC = 1-(1-dCC/dINC)**4
+    temp = dCC/dINC
+    agg_MPC_yearly =  [sum(temp[i:i+4]) for i in range(0, len(temp), 2)]
+    print(1-(1-dCC[0]/dINC)**4, agg_MPC_yearly[0]  )
+    norw_data = [0.54, 0.16, 0.08, 0.05, 0.04, 0.03]
+    x_ = [0, 4, 8, 12, 16, 20]
+    #plt.plot(np.arange(0,21), agg_MPC[:21])
+    plt.plot(agg_MPC_yearly[:6], label = 'HANK Model')
+    plt.plot(norw_data, 'o', marker = "d", label = 'Empirical Estimate')
+    pylab.rcParams.update(params)   
+    plt.legend(loc="upper right")
+    plt.xlabel('Years')
+    plt.ylabel('Annual MPC')    
+    plt.legend(fontsize=10)
+    plt.gcf().set_size_inches(7/1.8, 6/1.8) 
+    plt.tight_layout()
+    #plt.savefig('plots/calibration/Mpc_compare_Norway.pdf')
+    plt.show()    
+
+    dINC_indi = dTuni[0]
+    dCC_indi =  (1+ss['VAT']) * (td['c'] - ss['c'])
+    MPC_indi = 1-(1-dCC_indi[0]/dINC_indi)**4 
+ 
+    
+    #%%
+    MPC
+    dI = 0.01 *ss['w'] 
+    dTuni = np.empty([Time])   
+    ndates = 15
+    MPC_mat = np.empty([ndates, ndates])  
+    ttt = np.arange(0,Time)
+    r_disc = (1+ss['r'])**np.arange(0,ndates)
+    
+    for i in range(0,ndates):
+        dTuni[:]  = 0
+        dTuni[i]  = 0.01 *ss['w'] 
+        tvar = {'time' : ttt ,'Tuni' : dTuni} 
+        td =   EGMhousehold.td(ss, returnindividual = False, monotonic=False, **tvar)
+        MPC_mat[i,:] = ((td['C'][0:ndates] - ss['C'])/dI)  #/ r_disc
+        
+        
+    
+#%% HANK vs. RANK vs. TANK 
+
+#HANK MPC
+Time = 300  
+rhos = np.array([0.6])
+dTuni = np.empty([Time])   
+dTuni[:]  = 0
+dTuni[0]  = 0.01 *ss['w'] 
+        
+ttt = np.arange(0,Time)
+tvar = {'time' : ttt ,'Tuni' : dTuni} 
+td =   EGMhousehold.td(ss, returnindividual = False, monotonic=True, **tvar)
+dCC =  (1+ss['VAT']) * (td['C'] - ss['C'])
+HANK_MPC = dCC[0]/dTuni[0]
+
+def RA_tax(UINCAGG, w, ssAvgInc, cs_avg):    
+    watax = avgTaxf(w , ssAvgInc, cs_avg) 
+    UINCAGGatax = avgTaxf(UINCAGG, ssAvgInc, cs_avg)
+    return watax, UINCAGGatax
+
+
+@solved(unknowns=[ 'C',  'A'], targets=['euler',  'budget'])
+def C_RA(ra, C, L,  eis, watax, A, Ttd, N,  Tss, VAT, UINCAGGatax, rstar):         
+    euler = C ** (-1 / eis) -  (1/(1+rstar)) * (1 + ra(+1)) * C(+1) ** (-1 / eis)
+    budget = C * (1+VAT) + A - ((1 + ra) * A(-1) + watax * L + UINCAGGatax * (1-N) + Ttd + Tss)
+    return euler, budget    
+
+RA_inc = C_RA.attach_hetinput(RA_tax)
+
+
+
+
+@solved(unknowns=[ 'CR',  'A'], targets=['euler',  'budget_R'])
+def C_TANK(ra, C, L,  eis, watax, A, Ttd, N,  Tss, VAT, UINCAGGatax, rstar, sHTM):         
+    euler = CR ** (-1 / eis) -  (1/(1+rstar)) * (1 + ra(+1)) * CR(+1) ** (-1 / eis)
+    budget_R = CR * (1+VAT) + A - ((1 + ra) * A(-1) + (watax * L + UINCAGGatax * (1-N) + Ttd + Tss) * (1-sHTM) )
+    
+    C_HtM = (watax * L + UINCAGGatax * (1-N) + Ttd + Tss) * sHTM / (1+VAT)
+    C = C_HtM + CR
+    return euler, budget, C, C_HtM  
+
+C_TANK_inc = C_TANK.attach_hetinput(RA_tax)
+
+
+
+
+def MPC_calib(x, *args):
+    sHtM = x
+    ss_ = args[0] 
+    dTuni = args[1] 
+    HANK_MPC = args[2] 
+    Time = 300  
+    
+    td_TANK =   C_TANK_inc.td(ss, Tuni = dTuni)
+
+    dCC =  (1+ss['VAT']) * (td_TANK['C'] - ss['C'])
+    TANK_MPC = dCC[0]/dTuni[0]
+ 
+    print(TANK_MPC-HANK_MPC)
+    return TANK_MPC-HANK_MPC
+
+sHTM_g = 0.5
+ss_copy =  ss.copy()  
+args = (ss_copy, dTuni, HANK_MPC)
+res = optimize.minimize(MPC_calib,  sHTM_g, args = args, method='Nelder-Mead', tol = 1e-06)
+
+
+
+    #%%
+
+    nPoints = ss['nPoints']
+    beta = ss['beta']
+    
+    D      = ss['D']
+    A_dist = ss['a']
+    MPC    = MPC_indi
+    
+    # Wealth Distributional statistics
+    weight = D.flatten()
+    wealthdata = A_dist.flatten()  
+    
+    p01 = weighted_quantile(wealthdata, 0.01,  sample_weight=weight)
+    p10 = weighted_quantile(wealthdata, 0.1,  sample_weight=weight)
+    p30 = weighted_quantile(wealthdata, 0.3,  sample_weight=weight)
+    p50 = weighted_quantile(wealthdata, 0.5,  sample_weight=weight)    
+    p70 = weighted_quantile(wealthdata, 0.7,  sample_weight=weight)    
+    p90 = weighted_quantile(wealthdata, 0.9,  sample_weight=weight)       
+    p99 = weighted_quantile(wealthdata, 0.99,  sample_weight=weight)
+    
+    p01_index = np.nonzero(A_dist <= p01)   
+    p10_index = np.nonzero(A_dist<=p10)
+    p30_index = np.nonzero(np.logical_and(A_dist>p10, A_dist<=p30))
+    p50_index = np.nonzero(np.logical_and(A_dist>p30, A_dist<=p50)) 
+    p70_index = np.nonzero(np.logical_and(A_dist>p50, A_dist<=p70))
+    p90_index = np.nonzero(np.logical_and(A_dist>p70, A_dist<=p90))    
+    top10_index = np.nonzero(A_dist>=p90)   
+    top1_index = np.nonzero(A_dist>=p99)   
+
+    MPC01  =  np.average(MPC[p01_index], weights = D[p01_index])
+    MPC10  =  np.average(MPC[p10_index], weights = D[p10_index])
+    MPC30  =  np.average(MPC[p30_index], weights = D[p30_index])
+    MPC50  =  np.average(MPC[p50_index], weights = D[p50_index])
+    MPC70  =  np.average(MPC[p70_index], weights = D[p70_index])
+    MPC90  =  np.average(MPC[p90_index], weights = D[p90_index])
+    MPCt90  =  np.average(MPC[top10_index], weights = D[top10_index])
+    MPCt99  =  np.average(MPC[top1_index], weights = D[top1_index])
+    print('MPCs', MPC01, MPC10, MPC30, MPC50, MPC70, MPC90, MPCt90, MPCt99 )
+    
+    
+    beta_full = np.reshape(np.broadcast_to(beta[:, np.newaxis, np.newaxis, np.newaxis], (nPoints[0],nPoints[1], 2, nPoints[2])), (nPoints[1]*nPoints[0]*2, nPoints[2]))    
+    #beta_full = np.stack((beta_full1, beta_full1), axis=-1)
+    disc01  = np.average(beta_full[p01_index], weights = D[p01_index])
+    disc10 = np.average(beta_full[p10_index], weights = D[p10_index])
+    disc30 = np.average(beta_full[p30_index], weights = D[p30_index])
+    disc50 = np.average(beta_full[p50_index], weights = D[p50_index])
+    disc70 = np.average(beta_full[p70_index], weights = D[p70_index])
+    disc90 = np.average(beta_full[p90_index], weights = D[p90_index])
+    disct90 = np.average(beta_full[top10_index], weights = D[top10_index])
+    disct99 = np.average(beta_full[top1_index], weights = D[top1_index])
+    
+    print('Dics', disc01, disc10, disc30, disc50, disc70, disc90, disct90, disct99 )    
+    
+    N_full = np.reshape( np.stack((np.zeros((nPoints[1]*nPoints[0], nPoints[2])), np.ones((nPoints[1]*nPoints[0], nPoints[2]))), axis=-1), (nPoints[1]*nPoints[0]*2, nPoints[2]))  
+    N_Correct = np.reshape( np.stack((ss['N']+np.zeros((nPoints[1]*nPoints[0], nPoints[2])), (1-ss['N'])*np.ones((nPoints[1]*nPoints[0], nPoints[2]))), axis=-1), (nPoints[1]*nPoints[0]*2, nPoints[2]))  
+    D_ = D * N_Correct
+    N01  = np.average(N_full[p01_index], weights = D_[p01_index] )
+    N10 = np.average(N_full[p10_index], weights = D_[p10_index])
+    N30 = np.average(N_full[p30_index], weights = D_[p30_index])
+    N50 = np.average(N_full[p50_index], weights = D_[p50_index])    
+    N70 = np.average(N_full[p70_index], weights = D_[p70_index])
+    N80 = np.average(N_full[p90_index], weights = D_[p90_index])   
+    Nt90 = np.average(N_full[top10_index], weights = D_[top10_index])
+    Nt99 = np.average(N_full[top1_index], weights = D_[top1_index]) 
+      
+    print('Unemployment rate', N01, N10, N30, N50, N70, N80, Nt90,  Nt99)  
+    
+    e_full = np.reshape(np.broadcast_to(ss['e_grid'][np.newaxis, :, np.newaxis, np.newaxis], (nPoints[0],nPoints[1], 2, nPoints[2])), (nPoints[1]*nPoints[0]*2, nPoints[2]))    
+    #e_full = np.stack((ss['w'] * e_full1, ss['b'] * e_full1), axis=-1)
+    e01  = np.average(e_full[p01_index], weights = D[p01_index])
+    e10 = np.average(e_full[p10_index], weights = D[p10_index])
+    e30 = np.average(e_full[p30_index], weights = D[p30_index])
+    e50 = np.average(beta_full[p50_index], weights = D[p50_index])
+    e70 = np.average(e_full[p70_index], weights = D[p70_index])
+    e90 = np.average(e_full[p90_index], weights = D[p90_index])
+    et90 = np.average(e_full[top10_index], weights = D[top10_index])
+    et99 = np.average(e_full[top1_index], weights = D[top1_index])
+    
+    e_dist = np.stack((ss['N'] * ss['pi_ern'], (1-ss['N']) * ss['pi_ern']), axis=-1)
+    e_grid1 = np.stack((ss['w'] * ss['e_grid'], ss['UINCAGG'] * ss['e_grid']/(1-ss['N'])), axis=-1)
+    e01sc  = weighted_percentile_of_score(e_grid1.flatten(), e_dist.flatten(), e01)
+    e10sc  = weighted_percentile_of_score(e_grid1.flatten(), e_dist.flatten(), e10)
+    e30sc  = weighted_percentile_of_score(e_grid1.flatten(), e_dist.flatten(), e30)
+    e50sc  = weighted_percentile_of_score(e_grid1.flatten(), e_dist.flatten(), e50)
+    e70sc  = weighted_percentile_of_score(e_grid1.flatten(), e_dist.flatten(), e70)
+    e90sc  = weighted_percentile_of_score(e_grid1.flatten(), e_dist.flatten(), e90)
+    et90sc = weighted_percentile_of_score(e_grid1.flatten(), e_dist.flatten(), et90)
+    et99sc = weighted_percentile_of_score(e_grid1.flatten(), e_dist.flatten(), et99)
+    
+    print('earnings skill', e01sc, e10sc, e30sc, e50sc, e70sc, e90sc, et90sc, et99sc )    
+    
+    # Wealth gini 
+    print('Wealth gini',  gini(A_dist.flatten(), w=D.flatten()))
+    
+    # Income Distributional statistics   
+    #Idist = np.stack((ss['IncNpretax'], ss['IncSpretax']), axis=-1)
+    Idata = ss['Inc'].flatten() + ss['taxN'].flatten() + ss['taxS'].flatten()
+    Idist = ss['Inc'] + ss['taxN'] + ss['taxS']
+
+    p01 = weighted_quantile(Idata, 0.01,  sample_weight=weight)
+    p10 = weighted_quantile(Idata, 0.1,  sample_weight=weight)
+    p30 = weighted_quantile(Idata, 0.3,  sample_weight=weight)
+    p50 = weighted_quantile(Idata, 0.5,  sample_weight=weight)    
+    p70 = weighted_quantile(Idata, 0.7,  sample_weight=weight)    
+    p90 = weighted_quantile(Idata, 0.9,  sample_weight=weight)       
+    p99 = weighted_quantile(Idata, 0.99,  sample_weight=weight)
+    
+    p01_index = np.nonzero(Idist <= p01)   
+    p10_index = np.nonzero(Idist<=p10)
+    p30_index = np.nonzero(np.logical_and(Idist>p10, Idist<=p30))
+    p50_index = np.nonzero(np.logical_and(Idist>p30-0.001, Idist<=p50+0.001)) 
+    p70_index = np.nonzero(np.logical_and(Idist>p50, Idist<=p70))
+    p90_index = np.nonzero(np.logical_and(Idist>p70, Idist<=p90))    
+    top10_index = np.nonzero(Idist>=p90)   
+    top1_index = np.nonzero(Idist>=p99)  
+    
+    MPC01  =  np.average(MPC[p01_index], weights = D[p01_index])
+    MPC10  =  np.average(MPC[p10_index], weights = D[p10_index])
+    MPC30  =  np.average(MPC[p30_index], weights = D[p30_index])
+    MPC50  =  np.average(MPC[p50_index], weights = D[p50_index])
+    MPC70  =  np.average(MPC[p70_index], weights = D[p70_index])
+    MPC90  =  np.average(MPC[p90_index], weights = D[p90_index])
+    MPCt90  =  np.average(MPC[top10_index], weights = D[top10_index])
+    MPCt99  =  np.average(MPC[top1_index], weights = D[top1_index])
+    print('MPCs', MPC01, MPC10, MPC30, MPC50, MPC70, MPC90, MPCt90, MPCt99 )
+     
+    
+
+    #Taxable_inc_N = np.reshape(np.broadcast_to(w * e_grid[np.newaxis, :, np.newaxis], (nBeta,ne, nA)), (ne*nBeta, nA))   
+    #Taxable_inc_S = np.reshape(np.broadcast_to(b * e_grid[np.newaxis, :, np.newaxis], (nBeta,ne, nA)), (ne*nBeta, nA))
+    Taxable_inc = ss['Inc'] + ss['taxN'] + ss['taxS']
+    
+    taxrates = avgTaxf(Taxable_inc, ss['ssAvgInc'], ss['cs_avg']) 
+    tax01   = np.average(taxrates[p01_index], weights = D[p01_index])
+    tax10  = np.average(taxrates[p10_index], weights = D[p10_index])
+    tax30 =  np.average(taxrates[p30_index], weights = D[p30_index])
+    tax50 =  np.average(taxrates[p50_index], weights = D[p50_index])         
+    tax70  = np.average(taxrates[p70_index], weights = D[p70_index])
+    tax90 =  np.average(taxrates[p90_index], weights = D[p90_index])
+    taxt90 =  np.average(taxrates[top10_index], weights = D[top10_index])     
+    taxt99 =  np.average(taxrates[top1_index], weights = D[top1_index]) 
+    
+    print('Tax rates', tax01, tax10, tax30, tax50, tax70, tax90, taxt90, taxt99 )       
+    
+    N_full = np.reshape( np.stack((np.zeros((nPoints[1]*nPoints[0], nPoints[2])), np.ones((nPoints[1]*nPoints[0], nPoints[2]))), axis=-1), (nPoints[1]*nPoints[0]*2, nPoints[2]))  
+    N01  = np.average(N_full[p01_index], weights = D_[p01_index])
+    N10 = np.average(N_full[p10_index], weights = D_[p10_index])
+    N30 = np.average(N_full[p30_index], weights = D_[p30_index])
+    N50 = np.average(N_full[p50_index], weights = D_[p50_index])    
+    N70 = np.average(N_full[p70_index], weights = D_[p70_index])
+    N80 = np.average(N_full[p90_index], weights = D_[p90_index])   
+    Nt90 = np.average(N_full[top10_index], weights = D_[top10_index])
+    Nt99 = np.average(N_full[top1_index], weights = D_[top1_index]) 
+      
+    print('Unemployment rate', N01, N10, N30, N50, N70, N80, Nt90,  Nt99)  
+  
+    # Income gini 
+    I_pretax = Taxable_inc
+    print('Incine gini (pre-tax)',  gini(I_pretax.flatten(), w=D.flatten()))
+    I_posttax = ss['Inc']
+    print('Incine gini (post-tax)',  gini(I_posttax.flatten(), w=D.flatten()))
+
+#%%
+
+    pylab.rcParams.update(params)
+    wKernelDens(ss['beta'], ss['pi_beta'])     
+    plt.xlabel('Discount Factor')
+    plt.ylabel('Density')    
+    scale = 1.7
+    plt.gcf().set_size_inches(7/scale, 5/scale) 
+    plt.tight_layout()
+    plt.savefig('plots/calibration/Beta_density.pdf')    
+    plt.show()         
+    
+
+    
+    
+    #%%
+
+    sC = np.empty(10) * np.nan
+    
+    wealthdata = ss['a'].flatten()
+    weight     = ss['D'].flatten()
+    A_dist = ss['a']
+    p10 = weighted_quantile(wealthdata, 0.1,  sample_weight=weight)
+    p20 = weighted_quantile(wealthdata, 0.2,  sample_weight=weight)
+    p30 = weighted_quantile(wealthdata, 0.3,  sample_weight=weight)
+    p40 = weighted_quantile(wealthdata, 0.4,  sample_weight=weight)    
+    p50 = weighted_quantile(wealthdata, 0.5,  sample_weight=weight)    
+    p60 = weighted_quantile(wealthdata, 0.6,  sample_weight=weight)       
+    p70 = weighted_quantile(wealthdata, 0.7,  sample_weight=weight)
+    p80 = weighted_quantile(wealthdata, 0.8,  sample_weight=weight)
+    p90 = weighted_quantile(wealthdata, 0.9,  sample_weight=weight)
+    p100 = weighted_quantile(wealthdata, 1,  sample_weight=weight)
+
+    p10_index = np.nonzero(A_dist <= p10)   
+    p20_index = np.nonzero(np.logical_and(A_dist>p10, A_dist<=p20))
+    p30_index = np.nonzero(np.logical_and(A_dist>p20, A_dist<=p30))
+    p40_index = np.nonzero(np.logical_and(A_dist>p30, A_dist<=p40)) 
+    p50_index = np.nonzero(np.logical_and(A_dist>p40, A_dist<=p50))
+    p60_index = np.nonzero(np.logical_and(A_dist>p50, A_dist<=p60))    
+    p70_index = np.nonzero(np.logical_and(A_dist>p60, A_dist<=p70))    
+    p80_index = np.nonzero(np.logical_and(A_dist>p70, A_dist<=p80))    
+    p90_index = np.nonzero(np.logical_and(A_dist>p80, A_dist<=p90))    
+    p100_index = np.nonzero(A_dist>p90)        
+
+
+
+    Index_list = [p10_index, p20_index, p30_index, p40_index, p50_index, p60_index,  p70_index, p80_index,p90_index,p100_index ]
+    i = 0 
+    for x in Index_list:
+        sC[i] = 100 * np.sum(   ss['c'][x].flatten() * ss['D'][x].flatten()     ) / ss['C']
+        i += 1 
+
+    
+    x_dec = [*range(1, 11, 1)] 
+    fig = plt.figure()
+    ax1 = fig.add_subplot(111)
+    ax1.set_xticks(np.arange(len(x_dec)+1))
+    ax1.bar(x_dec, sC, width = 0.5)
+    plt.xlabel('Decile')
+    plt.ylabel('Pct.')  
+    plt.tight_layout()
+    plt.savefig('plots/C_analysis/C_by_deciles.pdf')    
+    plt.show()         
+        
+    
+    responselist = {}
+    R_list = []    
+    I_list_ela = []
+    q_list_ela = []
+    w_list_ela = []
+    Time = 300
+    ttt = np.arange(0,Time)
+ 
+#%%    
+ 
+def perc_create(ss, Trans, t):
+
+    sC = np.empty(10) * np.nan
+    if Trans:
+        wealthdata = ss['a'][t,:,:].flatten()
+        weight     = ss['D'][t,:,:].flatten()
+        A_dist = ss['a'][t,:,:]        
+    else:
+        wealthdata = ss['a'].flatten()
+        weight     = ss['D'].flatten()
+        A_dist = ss['a']
+        
+    p10 = weighted_quantile(wealthdata, 0.1,  sample_weight=weight)
+    p20 = weighted_quantile(wealthdata, 0.2,  sample_weight=weight)
+    p30 = weighted_quantile(wealthdata, 0.3,  sample_weight=weight)
+    p40 = weighted_quantile(wealthdata, 0.4,  sample_weight=weight)    
+    p50 = weighted_quantile(wealthdata, 0.5,  sample_weight=weight)    
+    p60 = weighted_quantile(wealthdata, 0.6,  sample_weight=weight)       
+    p70 = weighted_quantile(wealthdata, 0.7,  sample_weight=weight)
+    p80 = weighted_quantile(wealthdata, 0.8,  sample_weight=weight)
+    p90 = weighted_quantile(wealthdata, 0.9,  sample_weight=weight)
+    p100 = weighted_quantile(wealthdata, 1,  sample_weight=weight)
+
+    p10_index = np.nonzero(A_dist <= p10)   
+    p20_index = np.nonzero(np.logical_and(A_dist>p10, A_dist<=p20))
+    p30_index = np.nonzero(np.logical_and(A_dist>p20, A_dist<=p30))
+    p40_index = np.nonzero(np.logical_and(A_dist>p30, A_dist<=p40)) 
+    p50_index = np.nonzero(np.logical_and(A_dist>p40, A_dist<=p50))
+    p60_index = np.nonzero(np.logical_and(A_dist>p50, A_dist<=p60))    
+    p70_index = np.nonzero(np.logical_and(A_dist>p60, A_dist<=p70))    
+    p80_index = np.nonzero(np.logical_and(A_dist>p70, A_dist<=p80))    
+    p90_index = np.nonzero(np.logical_and(A_dist>p80, A_dist<=p90))    
+    p100_index = np.nonzero(A_dist>p90)        
+
+
+    Index_list = [p10_index, p20_index, p30_index, p40_index, p50_index, p60_index,  p70_index, p80_index,p90_index,p100_index ]
+    
+    return Index_list
+ 
+    #%%
+    var_list = {'ra' , 'Tuni', 'q', 'w'}
+
+    for k in var_list:
+        
+        if k == 'Tuni':
+            shock = 0.01 * ss['w'] * 0.6**(np.arange(Time))
+        else:
+            shock = 0.01 * ss[k] * 0.6**(np.arange(Time))
+        tvar       = {'time' : ttt, k :ss[k] + shock }
+        td       =   EGMhousehold.td(ss,       returnindividual = True, monotonic=True, **tvar)          
+        
+        responselist[k] = {}
+        responselist[k]['ela'] = []
+        responselist[k]['tot'] = []
+        
+        
+        
+        for x in range(10):
+            dc = 0
+            npop = 0 
+            Index_list_ss = perc_create(ss = ss, Trans = False, t = 0)
+            x_ind = Index_list_ss[x]
+            
+            for t in range(4):
+                Index_list = perc_create( ss = td, Trans = True, t = t)
+                temp = td['c'][t,:,:] * td['D'][t,:,:]
+                dc += np.sum(temp[Index_list[x]].flatten())
+                temp1 =  td['D'][t,:,:]
+                npop += np.sum( temp1[Index_list[x]].flatten())
+                
+            ssc_avg = np.sum(   ss['c'][x_ind].flatten() *  ss['D'][x_ind].flatten()  ) * 4
+            #ssc_sum = np.sum(   ss['c'][x].flatten() * ss['D'][x].flatten()     )
+            el  =  ( (dc / ssc_avg -1)) / (sum(shock[0:4]) * npop)
+            tot =  ( ((dc - ssc_avg) /( ss['C']*4))) /  (sum(shock[0:4]) *npop)
+            responselist[k]['ela'].append("%.2f" % el)
+            responselist[k]['tot'].append("%.2f" % tot)    
+            eff += tot
+
+        print(eff)
+       
+    Decil_list =     [1,2,3,4,5,6,7,8,9,10]
+    
+
+#%%
+    shockC_table = tabulate([['I (partial)', responselist['Tuni']['ela']], ['I (Total)', responselist['Tuni']['tot']],
+                    ['R (partial)', responselist['ra']['ela']], ['R (Total)', responselist['ra']['tot']],
+                    ['q (partial)', responselist['q']['ela']], ['q (Total)', responselist['q']['tot']],
+                    ['w (partial)', responselist['w']['ela']], ['w (Total)', responselist['w']['tot']]], 
+                   headers=['Decile', Decil_list])
+    shockC_table_latex = tabulate([['I (partial)', responselist['Tuni']['ela']], ['I (Total)', responselist['Tuni']['tot']],
+                    ['R (partial)', responselist['ra']['ela']], ['R (Total)', responselist['ra']['tot']],
+                    ['q (partial)', responselist['q']['ela']], ['q (Total)', responselist['q']['tot']],
+                    ['w (partial)', responselist['w']['ela']], ['w (Total)', responselist['w']['tot']]], 
+                   headers=['Decile', Decil_list],tablefmt  = 'latex_booktabs')    
+    
+    print(shockC_table)  
+    #print(shockC_table_latex)
+    
+    #print(tabulate([['Share Constrained', sborrow_con_list], ['Wealth Gini', gini_list]], headers=['Statistic', ite],tablefmt  = 'latex_booktabs'))
+    #print(tabulate([['Share Constrained', sborrow_con_list], ['Wealth Gini', gini_list]], headers=['Statistic', ite],tablefmt  = 'latex_booktabs'))
+     
+
+
+    #%%
+  
+    hist = np.histogram(ss['a'].flatten(), bins=ss['nPoints'][2], range=None, normed=None, weights=ss['D'].flatten(), density=None)
+  
+    fig, ax1 = plt.subplots( sharey =False)
+  
+    c_norm = (1+ss['VAT']) * ss['c'] / ss['Inc'] 
+    m = (ss['Inc'] + ss['a_grid'][np.newaxis, :] * (1+ss['ra'])) / ss['Inc'] 
+    
+    
+    mean_beta = np.vdot(ss['pi_beta'],ss['beta'])
+    
+    def find_nearest(array, value):
+        array = np.asarray(array)
+        idx = (np.abs(array - value)).argmin()
+        return idx
+    
+    nearest_ = find_nearest(ss['beta'], mean_beta)
+    if nearest_ == ss['nPoints'][0]:
+        nearest_ = ss['nPoints'][0] -1
+    ne = ss['nPoints'][1]  
+    nA = ss['nPoints'][2] 
+    bla = np.repeat(ss['pi_ern'], ( nA))
+    bla = np.reshape(bla, (ne, nA)) 
+    c_norm_mean =  np.pad(np.sum( c_norm[0+ne*nearest_:ne*(1+nearest_),:] * bla , axis = 0 ), (1, 0),'constant')
+    c_norm_low  =  np.pad(np.sum( c_norm[0:ne,:] * bla , axis = 0 ) , (1, 0),'constant')
+    c_norm_high  =  np.pad(np.sum( c_norm[-1-ne:-1,:] * bla , axis = 0 ) , (1, 0),'constant')
+    
+    m_norm_mean = np.pad(np.sum( m[0+ne*nearest_:ne*(1+nearest_),:] * bla , axis = 0 ), (1, 0),'constant')
+    m_norm_low = np.pad(np.sum( m[0:ne,:] * bla , axis = 0 ) , (1, 0),'constant')
+    m_norm_high = np.pad(np.sum( m[-1-ne:-1,:] * bla , axis = 0 ) , (1, 0),'constant')
+    
+    m_norm = ss['a']
+    ax1.hist(m_norm.flatten(), bins=300,  weights = ss['D'].flatten(), color = 'grey', edgecolor  = 'black')
+    ax2 = ax1.twinx()
+    ax2.plot( ss['a_grid'], c_norm_mean[1:], label = 'Average patience')
+    ax2.plot( ss['a_grid'], c_norm_low[1:], label = 'Most Impatient')
+    ax2.plot( ss['a_grid'], c_norm_high[1:], label = 'Most Patient', color = 'darkgreen' )
+    ax1.set_xlim([min(m_norm.flatten()),10])
+    ax2.set_ylim([0,5])
+    #ax1.set_ylim([0,0.35])
+    ax2.legend(loc="best")
+    
+    ax1.set_ylabel('Density', labelpad=10)
+    ax2.set_ylabel('Normalized Consumption', labelpad=10)
+    ax1.set_xlabel('Normalized Net Worth')
+    ax2.legend(fontsize=7)
+
+    pylab.rcParams.update(params)
+    ax2.grid(None)
+    #ax1.yaxis.tick_right()
+    #ax2.yaxis.tick_left()
+    plt.gcf().set_size_inches(7/1.8, 6/1.8) 
+    plt.tight_layout()
+    plt.savefig('plots/calibration/Consumption_function.pdf')    
+    plt.show()         
+    
+
+    
+    
+    #%%
+    
+    m = td['C'] + td['A']
+    A_lag = np.append(ss['A'], td['A'][1:])
+    Inc =  td['INCAGG'] + (1+ss['ra']) * A_lag
+    
+    res = m - Inc
+    plt.plot(res[:30])
+
+
+#%% Interest rate shock 
+    Time = 200
+    t = np.arange(0,Time)
+
+    dra = - 0.0025  * 0.6**(np.arange(Time))
+    tvar       = {'time' : t, 'ra' :ss['ra'] + dra }
+    td       =   EGMhousehold.td(ss,       returnindividual = True, monotonic=True, **tvar)  
+    #td       =   C_RA.td(ss,   **tvar)  
+
+
+    pylab.rcParams.update(params)
+    fig, ((ax1, ax2)) = plt.subplots(1,2)
+    tplot = 21 
+    x_t = np.arange(0,tplot)
+
+    
+    dcc = (td['C']/ss['C'] -1)*100
+    ax2.plot(x_t, dcc[:tplot])
+    ax2.set_xlabel('quarters')
+    ax2.set_ylabel('Pct. Change')    
+    ax2.set_title('Consumption Response')
+    ax2.plot(np.zeros(tplot),  linestyle='--', linewidth=1, color='black')
+
+    ax1.set_ylabel('Pct. Points Change')
+    ax1.plot(x_t, 100 * dra[:tplot], color = 'tab:blue')
+    ax1.set_title('Interest rate shock')
+    ax1.plot(np.zeros(tplot),  linestyle='--', linewidth=1, color='black')
+    ax1.set_xlabel('quarters')
+
+    M = 5
+    xticks = ticker.MaxNLocator(M)
+    ax2.xaxis.set_major_locator(xticks)
+    ax1.xaxis.set_major_locator(xticks)   
+    
+    plt.gcf().set_size_inches(7,2.5) 
+    plt.rcParams.update({'axes.titlesize': 'x-large'})
+    plt.rcParams.update({'axes.labelsize': 'small'})
+    plt.rcParams.update({'xtick.labelsize': 'xx-small', 'ytick.labelsize': 'xx-small'})
+    fig.tight_layout()  
+    #plt.savefig('plots/calibration/Consumption_interest_rate_response.pdf') 
+    plt.show()
+    
+    
+    #%%
+    
+    dC_impact = (td['c'][0,:,:]/ss['c']-1)*100
+    L_period = 10 
+    dC_later = (td['c'][L_period,:,:]/ss['c']-1)*100
+    
+    #import binscatter
+
+
+    
+    #fig, axes = plt.subplots(2)
+
+    # Binned scatter plot of wage vs tenure
+    #axes[0].binscatter(ss['a'].flatten(),dC_impact.flatten())
+    from scipy.stats import binned_statistic
+    
+    nbins = 40
+    plot_a_max = weighted_quantile(ss['a'].flatten(), 0.9,  sample_weight=ss['D'].flatten())
+
+    pylab.rcParams.update(params)
+    fig, ((ax1, ax2)) = plt.subplots(1, 2)
+    
+    bin_means, left_edge, right_edge = binned_statistic(ss['a'].flatten(), dC_impact.flatten(), bins=nbins, range=(ss['a_grid'][0], plot_a_max))     
+    ax1.bar(left_edge[:-1], bin_means,  color = 'grey', edgecolor  = 'black', alpha = 0.5, width = (plot_a_max-ss['a_grid'][0]) / nbins)    
+    
+    bin_means, left_edge, right_edge = binned_statistic(ss['a'].flatten(), dC_later.flatten(), bins=nbins, range=(ss['a_grid'][0], plot_a_max)) 
+    ax2.bar(left_edge[:-1], bin_means,  color = 'grey', edgecolor  = 'black', alpha = 0.5, width = (plot_a_max-ss['a_grid'][0]) / nbins)    
+        
+    
+     #%%
+
+    tplotl = 21 
+    dC_part = np.empty([tplotl])
+    dD_part = np.empty([tplotl])
+    dC_part_I = np.empty([tplotl])
+    dD_part_I = np.empty([tplotl])
+    
+    dTuni = np.empty([Time])   
+    dTuni[:]  = 0
+    dTuni[0]  = 0.01 *ss['w'] 
+    
+    ttt = np.arange(0,Time)
+
+    tvar = {'time' : ttt ,'Tuni' : dTuni} 
+    td_tuni =   EGMhousehold.td(ss, returnindividual = True, monotonic=True, **tvar)
+
+    dcc_I = (td_tuni['C']/ss['C'] -1)*100
+
+
+    
+    for j in range(tplotl):
+        dC_part[j] = np.vdot( (td['c'][j,:,:] - ss['c']),  ss['D']  )
+        dD_part[j] = np.vdot( (td['D'][j,:,:] - ss['D']),  ss['c']  ) 
+        dC_part_I[j] = np.vdot( (td_tuni['c'][j,:,:] - ss['c']),  ss['D']  )
+        dD_part_I[j] = np.vdot( (td_tuni['D'][j,:,:] - ss['D']),  ss['c']  ) 
+        
+                
+   
+    x_t = np.arange(0,tplotl)
+        
+    pylab.rcParams.update(params)
+    fig, ((ax1, ax2)) = plt.subplots(1,2)
+
+    ax1.plot(x_t, 100 * dD_part_I / ss['C'], label = 'Distributional Effect')    
+    ax1.plot(x_t, 100 * dC_part_I / ss['C'], label = 'Static Effect')  
+    ax1.plot(x_t, dcc_I[:tplotl], label = 'Total', linestyle='--', color = 'darkgreen')  
+    ax1.plot(np.zeros(tplotl),  linestyle='--', linewidth=1, color='black')  
+    
+    ax2.plot(x_t, 100 * dD_part / ss['C'], label = 'Distributional Effect')    
+    ax2.plot(x_t, 100 * dC_part / ss['C'], label = 'Static Effect')  
+    ax2.plot(x_t, dcc[:tplotl], label = 'Total', linestyle='--', color = 'darkgreen')  
+    ax2.plot(np.zeros(tplotl),  linestyle='--', linewidth=1, color='black')  
+
+
+    M = 5
+    xticks = ticker.MaxNLocator(M)
+    ax2.xaxis.set_major_locator(xticks)
+    ax1.xaxis.set_major_locator(xticks)    
+    ax2.set_xlabel('quarters')
+    ax2.set_ylabel('Pct. Change')
+    
+    ax1.set_xlabel('quarters')
+    ax1.set_ylabel('Pct. Change')
+    ax2.legend(loc = 'best' )
+    ax1.set_title('Income shock')
+    ax2.set_title('Interest rate shock')
+    
+    plt.gcf().set_size_inches(7,2.5)    
+    ax1.legend(loc = 'best' )
+    plt.rcParams.update({'axes.titlesize': 'x-large'})
+    plt.rcParams.update({'axes.labelsize': 'small'})
+    plt.rcParams.update({'xtick.labelsize': 'xx-small', 'ytick.labelsize': 'xx-small'})    
+    fig.tight_layout()  
+    plt.savefig('plots/C_analysis/dC__decomp_dist.pdf')   
+    plt.show()
+    
+    HANK_I_response = 100 * dC_part_I / td['C'][:tplotl]
+    HANK_R_response = 100 * dC_part / td['C'][:tplotl]
+    dC_dR_HANK = HANK_R_response[0]
+    #HANK_MPC = (td_tuni['C'][0]-ss['C'])/dTuni[0]
+    HANK_MPC = HANK_I_response[0]
+    
+    
+    #%% covariance terms
+    
+    URE = ss['Incagg'] + ss['a'] - (1+ss['VAT']) * ss['c']
+    MPC_i = (td_tuni['c'][0,:,:] - ss['c']) / dTuni[0]
+    
+    URE_channel = utils.cov(URE.flatten(), MPC_i.flatten(), ss['D'].flatten())
+    
+    sub_channel =  ss['eis'] * np.vdot( (1-MPC_i) * ss['c'] ,ss['D'])
+    
+    print(URE_channel, sub_channel, URE_channel - sub_channel)
+    
+    
+#%% Aggregation result for wages
+
+    dW = 0.01 *ss['w']   * 0.6**(np.arange(Time))
+    ttt = np.arange(0,Time)
+    tvarW = {'time' : ttt ,'Tuni' : dW} 
+    td_dW =   EGMhousehold.td(ss, returnindividual = True, monotonic=True, **tvarW)
+
+    dC_dW_tot = (td_dW['C']/ss['C'] -1)*100
+
+    dC_part_W = np.empty([tplotl])
+    dD_part_W = np.empty([tplotl])
+    
+    for j in range(tplotl):
+        dC_part_W[j] = np.vdot( (td_dW['c'][j,:,:] - ss['c']),  ss['D']  )
+        dD_part_W[j] = np.vdot( (td_dW['D'][j,:,:] - ss['D']),  ss['c']  ) 
+        
+#%%
+    fig, ((ax1, ax2)) = plt.subplots(1,2)
+
+    ax1.plot(x_t, 100 * dD_part_W / ss['C'], label = 'Distributional Effect')    
+    ax1.plot(x_t, 100 * dC_part_W / ss['C'], label = 'Behavioral Effect')  
+    ax1.plot(x_t, dC_dW_tot[:tplotl], label = 'Total', linestyle='--', color = 'darkgreen')  
+    ax1.plot(np.zeros(tplotl),  linestyle='--', linewidth=1, color='black')  
+    
+#%%
+
+    fig, ((ax1, ax2)) = plt.subplots(1,2)
+
+    ax1.plot(x_t, 100 * dD_part_W / ss['C']+100 * dC_part_W / ss['C'], label = 'Distributional Effect')    
+    #ax1.plot(x_t, 100 * dC_part_W / ss['C'], label = 'Behavioral Effect')  
+    ax1.plot(x_t, dC_dW_tot[:tplotl], label = 'Total', linestyle='--', color = 'darkgreen')  
+    ax1.plot(np.zeros(tplotl),  linestyle='--', linewidth=1, color='black')  
+
+#%% HANK vs TANK behavoiral 
+
+from scipy import optimize
+
+
+
+
+def RA_tax(UINCAGG, w, ssAvgInc, cs_avg):    
+    watax = avgTaxf(w , ssAvgInc, cs_avg) 
+    UINCAGGatax = avgTaxf(UINCAGG, ssAvgInc, cs_avg)
+    return watax, UINCAGGatax
+
+
+
+
+@solved(unknowns=[ 'CR',  'A'], targets=['euler',  'budget_R'])
+def C_TANK(ra, CR, L,  eis, A, Ttd, N,  Tss, VAT, INC, rstar, sHTM, Tuni, w, avg_beta, ssAvgInc, UINCAGG):       
+    
+    disc = (1/(1+rstar))
+    
+    #h = (w * e_grid_broad * (1-tax_broad**0.85)  / (vphi * (1+VAT))) ** frisch
+    #INCAGG = N * w * h * (1-avgTaxf(h * w , ssAvgInc, cs_avg) )
+    
+    #disc = avg_beta 
+    euler = CR ** (-1 / eis) -  disc * (1 + ra(+1)) * CR(+1) ** (-1 / eis)
+    
+    tN = 0.4 * w  
+    tU = 0.3 * INC
+    INCAGG = N * w * (1-tN) + (1-N) * UINCAGG * (1-tU)
+    budget_R = CR * (1+VAT) + A - ((1 + ra) * A(-1) + (INCAGG + Tuni + Ttd + Tss)  )
+    
+    C_HtM = (INCAGG + Ttd + Tuni + Tss)  / (1+VAT)
+    C = C_HtM * sHTM + CR * (1-sHTM)
+    return euler, budget_R, C, C_HtM  
+
+
+@solved(unknowns=['CR_N', 'A_N', 'CR_U', 'A_U'], targets=['eulerN', 'eulerU', 'budget_RN','budget_RU'])
+def C_TANK_U(ra, CR_N, CR_U, L,  eis, A_N, A_U, Ttd, N,  Tss, VAT, INC, rstar, sHTM, Tuni, w, avg_beta, ssAvgInc, UINCAGG, destr, q, disc):       
+    
+    #disc = (1/(1+rstar))
+    
+    #h = (w * e_grid_broad * (1-tax_broad**0.85)  / (vphi * (1+VAT))) ** frisch
+    #INCAGG = N * w * h * (1-avgTaxf(h * w , ssAvgInc, cs_avg) )
+    
+    #disc = avg_beta 
+    eulerN = CR_N ** (-1 / eis) -  disc * (1 + ra(+1)) * ((1 - destr * (1-q)) *CR_N(+1) ** (-1 / eis) + destr * (1-q) * CR_U(+1) ** (-1 / eis))
+    eulerU = CR_U ** (-1 / eis) -  disc * (1 + ra(+1)) * (q *CR_N(+1) ** (-1 / eis) + (1-q) * CR_U(+1) ** (-1 / eis))
+    
+
+    tN = 0.4   
+    tU = 0.3 
+    INCAGG = N * w * (1-tN) + (1-N) * UINCAGG * (1-tU)
+    
+    budget_RN = CR_N * (1+VAT) + A_N - ((1 + ra) * A_N(-1) + (w * (1-0.4) + Tuni + Ttd + Tss)  )
+    budget_RU = CR_U * (1+VAT) + A_U - ((1 + ra) * A_U(-1) + (UINCAGG * (1-0.4)/0.05 + Tuni + Ttd + Tss)  )
+    
+    C_HtM = (INCAGG + Ttd + Tuni + Tss)  / (1+VAT)
+    CR = N * CR_N + (1-N) * CR_U
+    C = C_HtM * sHTM + CR * (1-sHTM)
+
+    return eulerN, eulerU, budget_RN, budget_RU, C, C_HtM  
+
+@simple
+def C_TANK_U_nonlin(ra, CR_N, CR_U, L,  eis, A_N, A_U, Ttd, N,  Tss, VAT, INC, rstar, sHTM, Tuni, w, avg_beta, ssAvgInc, UINCAGG, destr, q, disc):       
+    
+    #disc = (1/(1+rstar))
+    
+    #h = (w * e_grid_broad * (1-tax_broad**0.85)  / (vphi * (1+VAT))) ** frisch
+    #INCAGG = N * w * h * (1-avgTaxf(h * w , ssAvgInc, cs_avg) )
+    
+    #disc = avg_beta 
+    eulerN = CR_N ** (-1 / eis) -  disc * (1 + ra(+1)) * ((1 - destr * (1-q)) *CR_N(+1) ** (-1 / eis) + destr * (1-q) * CR_U(+1) ** (-1 / eis))
+    eulerU = CR_U ** (-1 / eis) -  disc * (1 + ra(+1)) * (q *CR_N(+1) ** (-1 / eis) + (1-q) * CR_U(+1) ** (-1 / eis))
+    
+
+    tN = 0.4   
+    tU = 0.3 
+    INCAGG = N * w * (1-tN) + (1-N) * UINCAGG * (1-tU)
+    
+    budget_RN = CR_N * (1+VAT) + A_N - ((1 + ra) * A_N(-1) + (w * (1-0.4) + Tuni + Ttd + Tss)  )
+    budget_RU = CR_U * (1+VAT) + A_U - ((1 + ra) * A_U(-1) + (UINCAGG * (1-0.4) + Tuni + Ttd + Tss)  )
+    
+    C_HtM = (INCAGG + Ttd + Tuni + Tss)  / (1+VAT)
+    CR = N * CR_N + (1-N) * CR_U
+    C = C_HtM * sHTM + CR * (1-sHTM)
+
+    return eulerN, eulerU, budget_RN, budget_RU, C, C_HtM  
+
+@solved(unknowns=[ 'CR'], targets=['euler'])
+def C_TANK_R(ra, CR, L,  eis, A, Ttd, N,  Tss, VAT, INC, rstar, sHTM, Tuni, w, avg_beta, UINCAGG):       
+    
+    disc = (1/(1+rstar))
+ 
+    #disc = avg_beta 
+    euler = CR ** (-1 / eis) -  disc * (1 + ra(+1)) * CR(+1) ** (-1 / eis)
+    
+    tN = 0.4 * w  
+    tU = 0.3 * UINCAGG
+    INCAGG = N * w * (1-tN) + (1-N) * UINCAGG * (1-tU)
+    
+    budget_R = CR * (1+VAT) + A - ((1 + ra) * A(-1) + (INCAGG + Tuni + Ttd + Tss)  )
+    
+    C_HtM = (INCAGG + Ttd + Tuni + Tss)  / (1+VAT)
+    C = C_HtM * sHTM + CR * (1-sHTM)
+    return euler, C, C_HtM  
+
+#C_TANK_inc = C_TANK.attach_hetinput(RA_tax)
+
+
+def MPC_calib(x, *args):
+    sHtM = x
+    ss_ = args[0] 
+    dTuni = args[1] 
+    HANK_MPC = args[2] 
+
+    
+    ss_['sHTM'] = sHtM
+    ss_['CR'] = ss_['C'] 
+    
+    td_TANK =   C_TANK.td(ss_, Tuni = dTuni)
+ 
+    #dCC =  (1+ss_['VAT']) * (td_TANK['C'] - td_TANK['C'][200])
+
+    dCC = 100 * (td_TANK['C']  / td_TANK['C'][Time-50]-1)
+    
+    
+    return dCC[0] - HANK_MPC
+
+def R_calib(x, *args):
+    ra = x
+    ss_1 = args[0] 
+    ddd = args[1] 
+    dC_dR_HANK = args[2] 
+
+    
+    #ss['sHTM'] = sHtM
+    #ss['CR'] = ss['C'] 
+    ss_1.update({ 'ra' : ra, 'rstar' : ra})
+    
+     
+    ssCR   =  (ra * ss_1['A'] + (ss_1['INC'] + ss_1['Tuni'] + ss_1['Ttd']  + ss_1['Tss'] ))/  (1+ss_1['VAT']) 
+    ss_1.update({'CR' :  ssCR})
+    
+    
+    td_TANK_ra =   C_TANK_R.td(ss_1, ra = ra + ddd)
+
+    dC_dR_TANK = (td_TANK_ra['C']/ td_TANK_ra['C'][Time-50] -1)*100
+    plt.plot(dC_dR_TANK[:20])
+    #print( (1/(1+ra)))
+    return dC_dR_HANK - dC_dR_TANK[0]
+
+sHTM_g = 0.2
+ss['CR'] = ss['C'] * (1-sHTM_g) 
+ss['sHTM'] = sHTM_g
+ss['avg_beta'] = np.vdot(ss['beta'], ss['pi_beta'])
+re_calib_beta = False
+
+ss_copy =  ss.copy()  
+# if re_calib_beta:
+#     ss_copy.update({'rstar' :  1/ss['avg_beta']-1, 'ra' :  1/ss['avg_beta']-1})
+
+    
+args = (ss_copy, dTuni, HANK_MPC)
+res_HtM = optimize.toms748(MPC_calib, 0,1, args = args)
+
+
+ss['sHTM'] = res_HtM
+ss_copy['sHTM'] = res_HtM
+td_TANK =   C_TANK.td(ss_copy, Tuni = dTuni)
+dCC_TANK =  (td_TANK['C']/ td_TANK['C'][Time-50] -1)*100
+
+ss_copy_ra =  ss_copy.copy() 
+ddd = - 0.0025  * 0.6**(np.arange(Time))
+
+
+args = (ss_copy_ra, ddd, dC_dR_HANK)
+res_ra = optimize.toms748(R_calib, 0.005,3, args = args)
+
+td_ra       = C_TANK.td(ss_copy, ra = ss['ra'] + ddd)
+dCC_TANK_ra = (td_ra['C']/ td_ra['C'][Time-50] -1)*100
+
+ 
+ss_copy_ra.update({'rstar' : res_ra, 'ra' :  res_ra})
+
+td_ra_calibrated       = C_TANK_R.td(ss_copy_ra, ra = ss_copy_ra['ra'] + ddd)
+dCC_TANK_ra_calibrated = (td_ra_calibrated['C']/ td_ra_calibrated['C'][Time-50] -1)*100
+
+pylab.rcParams.update(params)
+fig, ((ax1, ax2)) = plt.subplots(1,2)
+
+ax1.plot(x_t, HANK_I_response, label = 'HA - Static Effect')  
+ax1.plot(x_t, dCC_TANK[:tplotl], label = 'TA', linestyle='--', color = 'darkgreen')  
+ax1.legend(loc = 'best' )
+ax1.plot(np.zeros(tplotl),  linestyle='--', linewidth=1, color='black')
+
+ax2.plot(x_t, HANK_R_response, label = 'HA - Static Effect')  
+ax2.plot(x_t, dCC_TANK_ra[:tplotl], label = 'TA - HA calibration', linestyle='dashdot')  
+ax2.plot(x_t, dCC_TANK_ra_calibrated[:tplotl], label = 'TA - re-calibrated', linestyle='--', color = 'darkgreen')  
+ax2.plot(np.zeros(tplotl),  linestyle='--', linewidth=1, color='black')
+ax2.legend(loc = 'best' )
+
+M = 5
+xticks = ticker.MaxNLocator(M)
+ax2.xaxis.set_major_locator(xticks)
+ax1.xaxis.set_major_locator(xticks)    
+ax2.set_xlabel('quarters')
+ax2.set_ylabel('Pct. Change')
+
+ax1.set_xlabel('quarters')
+ax1.set_ylabel('Pct. Change')
+ax2.legend(loc = 'best' )
+ax1.set_title('Income shock')
+ax2.set_title('Interest rate shock')
+
+
+plt.gcf().set_size_inches(7,2.5) 
+plt.rcParams.update({'axes.titlesize': 'x-large'})
+plt.rcParams.update({'axes.labelsize': 'small'})
+plt.rcParams.update({'xtick.labelsize': 'xx-small', 'ytick.labelsize': 'xx-small'})    
+fig.tight_layout()  
+#plt.savefig('plots/C_analysis/TANK_vs_HANK_behavoiral_decomp.pdf')   
+plt.show()
+
+
+#%%
+
+
+# R = 1 + ss_copy['ra']  
+# q = ss['q']
+# destr = ss['destr']
+# res = lambda x :  ((1-R*x*(1-q)) - ( (R * x * destr * (1-q))/ (1-R * x * (1-destr*(1-q)))))**2
+# bnds = [0, 1]
+# res = optimize.minimize_scalar(res, 0.5, method='Bounded',  bounds = bnds)      
+
+
+ss_U =  ss_copy.copy() 
+ss_U.update({'CR_N' : ss['CN'], 'CR_U' :  ss['CS'], 'A_N' :  ss['AN'], 'A_U' :  ss['AS'], 'disc' : 1/(1+ss['rstar'])})
+
+
+dN =  0.01 *ss['N'] * 0.8 ** (np.arange(Time))
+tvar = {'time' : ttt ,'N' : ss['N'] + dN} 
+td_N =   EGMhousehold.td(ss, returnindividual = True, monotonic=True, **tvar)
+
+Cvar = 'c'
+
+dN_ = ss['N'] + shift(dN, 0, cval=0)
+
+Dtd = N_mult('D', ss, td_N, dN_)
+dC_part_N, dD_part_N = FigUtils.HA_Decomp(ss, td_N, tplotl, Cvar, Dtd)
+
+#td_N_calibrated       = C_TANK_U.td(ss_U, N = ss['N'] + dN)
+#td_N_calibrated       = C_TANK_U.td(ss_U, N = ss['N'] + dN)
+#td_N_calibrated = nonlinear.td_solve(ss_U, [C_TANK_U_nonlin],  ['CR_N', 'A_N', 'CR_U', 'A_U'], ['eulerN', 'eulerU', 'budget_RN','budget_RU'],  N = ss['N'] + dN)
+
+#td_N_calibrated       = C_TANK_R.td(ss_copy_ra, N = ss['N'] + dN)
+
+#dCC_TANK_N_calibrated = (td_N_calibrated['C'][:tplotl]/ td_N_calibrated['C'][200] -1)*100
+dCC_HANK_N = (dC_part_N / ss['C'] )*100
+plt.plot(dCC_HANK_N)
+plt.plot(dCC_TANK_N_calibrated,linestyle='--')
+plt.show()
+
+
+#%%
+dq =  0.01  * 0.8 ** (np.arange(Time))
+
+tvar = {'time' : ttt ,'q' : ss['q'] + dq} 
+td_q =   EGMhousehold.td(ss, returnindividual = True, monotonic=True, **tvar)
+
+Cvar = 'ctd'
+dC_part_q, dD_part_q = FigUtils.HA_Decomp(ss, td_q, tplotl, Cvar, td_q['D'])
+
+
+#td_q_calibrated       = C_TANK_U.td(ss_U, q = ss['q'] + dq)
+#td_N_calibrated       = C_TANK_R.td(ss_copy_ra, N = ss['N'] + dN)
+#td_q_calibrated = nonlinear.td_solve(ss_U, [C_TANK_U_nonlin],  ['CR_N', 'A_N', 'CR_U', 'A_U'], ['eulerN', 'eulerU', 'budget_RN','budget_RU'],  q = ss['q'] + dq)
+
+#dCC_TANK_q_calibrated = (td_q_calibrated['C'][:tplotl]/ td_q_calibrated['C'][200] -1)*100
+
+dCC_HANK_q = (dC_part_q / ss['C'] )*100
+plt.plot(dCC_HANK_q)
+#plt.plot(dCC_TANK_q_calibrated,linestyle='--')
+plt.show()
+
+#%%
+pylab.rcParams.update(params)
+fig, ((ax1, ax2)) = plt.subplots(1,2)
+
+ax1.plot(x_t, dCC_HANK_N, label = 'HANK - Behavioral Effect')  
+ax1.plot(x_t, dCC_TANK_N_calibrated, label = 'TANK', linestyle='--', color = 'darkgreen')  
+ax1.legend(loc = 'best' )
+ax1.plot(np.zeros(tplotl),  linestyle='--', linewidth=1, color='black')
+
+ax2.plot(x_t, HANK_R_response, label = 'HANK - Behavioral Effect')  
+ax2.plot(x_t, dCC_TANK_ra[:tplotl], label = 'TANK', linestyle='dashdot')  
+#ax2.plot(x_t, dCC_TANK_ra_calibrated[:tplotl], label = 'TANK - re-calibrated', linestyle='--', color = 'darkgreen')  
+ax2.plot(np.zeros(tplotl),  linestyle='--', linewidth=1, color='black')
+ax2.legend(loc = 'best' )
+
+M = 5
+xticks = ticker.MaxNLocator(M)
+ax2.xaxis.set_major_locator(xticks)
+ax1.xaxis.set_major_locator(xticks)    
+ax2.set_xlabel('quarters')
+ax2.set_ylabel('Pct. Change')
+
+ax1.set_xlabel('quarters')
+ax1.set_ylabel('Pct. Change')
+ax2.legend(loc = 'best' )
+ax1.set_title('Employment shock')
+ax2.set_title('Finding rate shock')
+
+
+plt.gcf().set_size_inches(7,2.5) 
+plt.rcParams.update({'axes.titlesize': 'x-large'})
+plt.rcParams.update({'axes.labelsize': 'small'})
+plt.rcParams.update({'xtick.labelsize': 'xx-small', 'ytick.labelsize': 'xx-small'})    
+fig.tight_layout()  
+#plt.savefig('plots/C_analysis/TANK_vs_HANK_behavoiral_decomp.pdf')   
+plt.show()
+
+        #%%
+        
+dcc_N = (td_N['CTD']/ss['CTD'] -1)*100
+dcc_q = (td_q['C']/ss['C'] -1)*100
+
+pylab.rcParams.update(params)
+fig, ((ax1, ax2)) = plt.subplots(1,2)
+
+#ax1.plot(x_t, dcc_N[0] *  dN[:21]/dN[0] , label = 'N')    
+
+ax1.plot(x_t, 100 * dD_part_N / ss['C'], label = 'Distributional Effect')    
+ax1.plot(x_t, 100 * dC_part_N / ss['C'], label = 'Static Effect')  
+ax1.plot(x_t, dcc_N[:tplotl], label = 'Total', linestyle='--', color = 'darkgreen')  
+ax1.plot(np.zeros(tplotl),  linestyle='--', linewidth=1, color='black')  
+
+ax2.plot(x_t, 100 * dD_part_q / ss['C'], label = 'Distributional Effect')    
+ax2.plot(x_t, 100 * dC_part_q / ss['C'], label = 'Static Effect')  
+ax2.plot(x_t, dcc_q[:tplotl], label = 'Total', linestyle='--', color = 'darkgreen')  
+ax2.plot(np.zeros(tplotl),  linestyle='--', linewidth=1, color='black')  
+
+
+M = 5
+xticks = ticker.MaxNLocator(M)
+ax2.xaxis.set_major_locator(xticks)
+ax1.xaxis.set_major_locator(xticks)    
+ax2.set_xlabel('quarters')
+ax2.set_ylabel('Pct. Change')
+
+ax1.set_xlabel('quarters')
+ax1.set_ylabel('Pct. Change')
+ax2.legend(loc = 'best' )
+ax1.set_title('Employment shock')
+ax2.set_title('Finding rate shock')
+
+plt.gcf().set_size_inches(7,2.5)    
+#ax1.legend(loc = 'center' )
+plt.rcParams.update({'axes.titlesize': 'x-large'})
+plt.rcParams.update({'axes.labelsize': 'small'})
+plt.rcParams.update({'xtick.labelsize': 'xx-small', 'ytick.labelsize': 'xx-small'})    
+fig.tight_layout()  
+#plt.savefig('plots/C_analysis/dC__decomp_dist_N_q.pdf')   
+plt.show()
+
+
+#%%
+
+    fig, ((ax1, ax2)) = plt.subplots(1,2)
+
+    ax1.plot(x_t, 100 * dD_part_W / ss['C']+100 * dC_part_W / ss['C'], label = 'Distributional Effect')    
+    #ax1.plot(x_t, 100 * dC_part_W / ss['C'], label = 'Behavioral Effect')  
+    ax1.plot(x_t, dC_dW_tot[:tplotl], label = 'Total', linestyle='--', color = 'darkgreen')  
+    ax1.plot(np.zeros(tplotl),  linestyle='--', linewidth=1, color='black')  
+
+
+
+
+    #%%
+    
+    dDD = np.sum(td['D'][:,:,0], axis = 1)
+    
+    plt.plot(100 *(dDD / np.sum(ss['D'][:,0], axis = 0) -1))
+    plt.show()
+    #plt.plot(100 *(dDD / np.sum(ss['D'][:,0], axis = 0) -1))
+        
+    
+    #dC_constrained  = np.sum(td['c'][:,:,0].T * ss['pi_e'][:, np.newaxis], axis = 0 )
+    e_resp = np.broadcast_to(ss['pi_e'][:, np.newaxis], (ss['nPoints'][0] * ss['nPoints'][1],Time))   
+    dC_constrained  = np.sum(td['c'][:,:,0].T * e_resp, axis = 0 ).T
+    ssC_constrained = np.sum(ss['c'][:,0].T * ss['pi_e'] ).T
+    
+    
+    plt.plot(100 *((dC_constrained / ssC_constrained )-1))
+    plt.show() 
+    
+    
+    #%% Beta response 
+    
+
+    fig, ((ax1, ax2)) = plt.subplots(1,2)
+    tplotl = 21 
+    x_t = np.arange(0,tplotl)
+    
+    params = {'legend.fontsize': 6, 'axes.titlesize': 'medium'}    
+    plt.rcParams.update({'axes.labelsize': 'x-small'})
+    plt.rcParams.update({'xtick.labelsize': 'xx-small', 'ytick.labelsize': 'xx-small'})    
+    plt.locator_params(axis='x', nbins=5)
+    pylab.rcParams.update(params)
+    
+    
+    M = 5
+    xticks = ticker.MaxNLocator(M)
+    ax1.xaxis.set_major_locator(xticks)
+    ax1.set_ylabel('Pct. Points Change')
+    ax1.plot(x_t,  100 * ddd[:tplotl], color = 'tab:blue')
+    ax1.set_title('Interest rate shock')
+    ax1.plot(x_t, np.zeros(tplotl),  linestyle='--', linewidth=1, color='black')
+    ax1.set_xlabel('quarters')
+    
+    nBeta = ss['nPoints'][0]
+    ne   = ss['nPoints'][1]
+    
+    #Dist_A_td = np.sum( td['D'] , axis = 1)
+    #Dist_A_ss = np.sum( ss['D'] , axis = 0)
+
+    
+    
+    for x in range(0,nBeta):
+        list_1 = x * ne
+        list_2 = (1+x) * ne-1
+        
+        Dist_A_td = np.sum( td['D'][:,list_1:list_2,:] , axis = 1)
+        Dist_A_ss = np.sum( ss['D'][list_1:list_2,:] , axis = 0)        
+            
+        
+        dC_beta_ =  np.sum(   np.sum( td['c'][:,list_1:list_2,:] * td['D'][:,list_1:list_2,:], axis = 1)  , axis = 1)
+        
+        ssC = np.sum(   np.sum( ss['c'][list_1:list_2,:]  * ss['D'][list_1:list_2,:] , axis = 0 ) )
+        dc_het = 100* ((dC_beta_ / ssC )-1)
+        ax2.plot( x_t, dc_het[:tplotl] , label = r'$\beta$ = %s' %float("{:.3f}".format(ss['beta'][x])) , linewidth = 1)
+        
+    ax2.plot(x_t, np.zeros(tplotl),  linestyle='--', linewidth=1, color='black')        
+    dcc = (td['C']/ss['C'] -1)*100
+    ax2.plot(x_t, dcc[:tplotl], label = 'Agg.')         
+    ax2.legend(loc = 'best' , ncol=3 )
+    ax2.set_xlabel('quarters')
+    ax2.set_ylabel('Pct. Change')    
+    ax2.set_title('Consumption Response')
+    
+    plt.gcf().set_size_inches(7,2.5) 
+    fig.tight_layout()  
+    plt.savefig('plots/calibration/Consumption_interest_rate_response_hetero.pdf') 
+    plt.show()    
+    
+    
+    
+    #%%
+    beta_calib_dict = ()
+    beta_calib_dict = {'beta_mid' : ss['beta_mid'] , 'beta_var' : ss['beta_var'], 'beta_disp' : ss['beta_disp']}
+
+    dist_type = "LeftSkewed"
+    beta_avg_calib = np.vdot(ss['beta'], ss['pi_beta'])
+
+    Time = 500
+    ttt = np.arange(0,Time)
+    ddd = - 0.0025  * 0.6**(np.arange(Time)[:, np.newaxis])  
+    tvar       = {'time' : ttt, 'ra' :ss['ra'] + ddd }
+    #td       =   EGMhousehold.td(ss,       returnindividual = False, monotonic=True, **tvar)  
+    
+    New_ss =  ss.copy()
+    New_ss.update({'ssflag' : True})
+    for x in range(0,1):
+        #beta_var = ss['beta_var'] * (1-x/10)
+        beta_var = ss['beta_var']  * 0.01
+        
+        beta, pi_beta, Pi_beta = beta_dist(ss['nPoints'][0], ss['beta_mid'], beta_var, ss['beta_disp'], dist_type )
+        beta_avg = np.vdot(beta, pi_beta)        
+        new_beta_avg = beta_avg_calib * (1+ 1 * x/1000)
+        beta *= new_beta_avg / beta_avg
+     
+        Pi   =  np.kron(Pi_beta, ss['Pi_ern'])
+        pi_e =  np.kron(pi_beta, ss['pi_ern'])
+        
+        New_ss.update({'beta' : beta, 'pi_beta' : pi_beta, 'Pi_beta' : Pi_beta, 'Pi' : Pi, 'pi_e' : pi_e})
+        
+        New_ss.update({'beta' : beta, 'pi_beta' : pi_beta, 'Pi_beta' : Pi_beta, 'Pi' : Pi, 'pi_e' : pi_e, 'e_grid' : e_grid, 'pi_ern' : pi_ern, 'Pi_ern' : Pi_ern})
+        ss_HH =   EGMhousehold.ss(**New_ss)   
+        for x in ss_HH.keys():
+            New_ss[x] = ss_HH[x]
+        td       =   EGMhousehold.td(New_ss,       returnindividual = False, monotonic=True, **tvar)       
+        dcc = (td['C']/New_ss['C'] -1)*100
+        plt.plot(dcc[:20])
+        
+        
+#%%
+        #beta_var = ss['beta_var'] * (1-x/10)
+        beta_var = ss['beta_var']  * 0.01
+        
+        beta, pi_beta, Pi_beta = beta_dist(ss['nPoints'][0], ss['beta_mid'], beta_var, ss['beta_disp'], dist_type )
+        beta_avg = np.vdot(beta, pi_beta)        
+        new_beta_avg = 0.982243553
+        beta *= new_beta_avg / beta_avg
+        
+        New_ss.update({'beta' : beta, 'pi_beta' : pi_beta, 'Pi_beta' : Pi_beta})
+        ss_HH =   EGMhousehold.ss(**New_ss)   
+        for x in ss_HH.keys():
+            New_ss[x] = ss_HH[x]
+        td       =   EGMhousehold.td(New_ss,       returnindividual = False, monotonic=True, **tvar)       
+        dcc = (td['C']/New_ss['C'] -1)*100
+        plt.plot(dcc[:20])
+        
+    #%%
+
+    pylab.rcParams.update(params)
+    fig, ((ax1, ax2)) = plt.subplots(1,2)
+    tplotl = 20 
+
+    ite = [ 0.81, 0.85, 0.9, 0.96]
+    for x in ite: 
+        New_ss =  ss.copy()  
+        _, _, Pi_ern = utils.markov_rouwenhorst(rho= x, sigma= 0.7, N=ne) # Values from IMPC: rho = 0.91, variance = 0.92. Floden and linde (2001) for Sweden persistence values. 
+        New_ss.update({'ssflag' : True, 'Pi_ern': Pi_ern})
+        ss_HH =   EGMhousehold.ss(**New_ss)    
+        for j in ss_HH.keys():
+            New_ss[j] = ss_HH[j]                
+        td       =   EGMhousehold.td(New_ss,       returnindividual = False, monotonic=True, **tvar)  
+
+        dc_het = (td['C']/New_ss['C'] -1)*100
+        ax2.plot(  dc_het[:tplotl] , label = 'std = %s' %float("{:.3f}".format(x)) , linewidth = 1)        
+        ax2.legend(loc = 'best' , ncol=3 )
+
+    
+
+    ax2.set_xlabel('quarters')
+    ax2.set_ylabel('Pct. Change')    
+    ax2.set_title('Consumption Response')
+    ax2.plot(np.zeros(tplotl),  linestyle='--', linewidth=1, color='black')
+    #ax2.set_xlim([0, tplotl])
+
+
+    ax1.set_ylabel('Pct. Points Change')
+    ax1.plot( 100 * ddd[:tplotl], color = 'tab:blue')
+    ax1.set_title('Interest rate shock')
+    ax1.plot(np.zeros(tplotl),  linestyle='--', linewidth=1, color='black')
+    ax1.set_xlabel('quarters')
+
+    
+    plt.gcf().set_size_inches(7,2.5) 
+    plt.rcParams.update({'axes.titlesize': 'x-large'})
+    plt.rcParams.update({'axes.labelsize': 'small'})
+    plt.rcParams.update({'xtick.labelsize': 'xx-small', 'ytick.labelsize': 'xx-small'})
+    fig.tight_layout()  
+    #plt.savefig('plots/calibration/Consumption_interest_rate_response.pdf') 
+    plt.show()
+    
+
+#%%
+
+    Time = 500
+    ttt = np.arange(0,Time)
+
+    #ddd = - 0.0025  * 0.6**(np.arange(Time)[:, np.newaxis])
+    ddd = np.empty([Time])
+    New_ss =  ss.copy()
+    New_ss.update({'ssflag' : True, 'tdiv': 0.005, 'frisch' : 0.05})
+    ss_HH =   EGMhousehold.ss(**New_ss)    
+    for j in ss_HH.keys():
+        New_ss[j] = ss_HH[j]                
+    
+
+    ddd = - 0.0025  * 0.6**(np.arange(Time))
+    tvar       = {'time' : ttt, 'tdiv' :ss['ra'] + ddd }
+    td_behavior       =   EGMhousehold.td(New_ss,       returnindividual = True, monotonic=True, **tvar)  
+
+#%%
+
+    Time = 500
+    ttt = np.arange(0,Time)
+
+    New_ss1 =  ss.copy()
+    #New_ss1.update({'ssflag' : True,  'frisch' : 0.05})
+    New_ss1.update({'ssflag' : True,  'frisch' : 0.05})
+    ss_HH1 =   EGMhousehold.ss(**New_ss1)    
+    for j in ss_HH1.keys():
+        New_ss1[j] = ss_HH1[j]        
+
+
+    #ddd = - 0.0025  * 0.6**(np.arange(Time)[:, np.newaxis])
+    ddd = np.empty([Time])
+    # ddd[:4] = 0 
+    # ddd[5:] = - 0.0025  * 0.6**(np.arange(Time-5))
+    ddd = - 0.0025  * 0.6**(np.arange(Time))
+    tvar       = {'time' : ttt, 'ra' :ss['ra'] + ddd }
+    td_inc       =   EGMhousehold.td(New_ss1,       returnindividual = True, monotonic=True, **tvar)  
+
+ 
+ 
+
+
+#%%
+    pylab.rcParams.update(params)
+    fig, ((ax1, ax2)) = plt.subplots(1,2)
+    tplotl = 20 
+    
+    dcc_inc = (td_inc['C']/New_ss1['C'] -1)*100
+    dcc_Euler= (td_behavior['C']/New_ss['C'] -1)*100
+    #agg =   ((td_inc['C']-New_ss1['C'] + td_behavior['C'])/New_ss1['C'] -1)*100
+    ax2.plot( dcc_inc[:tplotl], label = 'Income')
+    ax2.plot( dcc_Euler[:tplotl], label = 'Euler')
+    #ax2.plot( agg[:tplotl], label = 'Agg')
+    ax2.set_xlabel('quarters')
+    ax2.set_ylabel('Pct. Change')    
+    ax2.set_title('Consumption Response')
+    ax2.plot(np.zeros(tplotl),  linestyle='--', linewidth=1, color='black')
+    ax2.legend(loc = 'best'  )
+    #ax2.set_xlim([0, tplotl])
+
+    ax1.set_ylabel('Pct. Points Change')
+    ax1.plot( 100 * ddd[:tplotl], color = 'tab:blue')
+    ax1.set_title('Interest rate shock')
+    ax1.plot(np.zeros(tplotl),  linestyle='--', linewidth=1, color='black')
+    ax1.set_xlabel('quarters')
+
+    
+    plt.gcf().set_size_inches(7,2.5) 
+    plt.rcParams.update({'axes.titlesize': 'x-large'})
+    plt.rcParams.update({'axes.labelsize': 'small'})
+    plt.rcParams.update({'xtick.labelsize': 'xx-small', 'ytick.labelsize': 'xx-small'})
+    fig.tight_layout()  
+    #plt.savefig('plots/calibration/Consumption_interest_rate_Income_vs_Euler.pdf') 
+    plt.show()
+    
+
+
+
+#%% Lorenz 
+    D = np.stack([ss['N'] * ss['D'], (1-ss['N']) * ss['D']])
+    Wealth = np.stack( [ ((ss['aN'] )* ss['N'] , (1-ss['N']) * (ss['aS'] ))])
+    Wealth_weighted = Wealth * D
+    f_vals_A, l_vals_A = lorenz_curve(Wealth_weighted.flatten())
+    wealth_gini =  gini(Wealth.flatten(), w=D.flatten())
+
+    consumption = np.stack( [ ((ss['cN'] )* ss['N'] , (1-ss['N']) * (ss['cS'] ))])
+    consumption_weighted = consumption * D
+    f_vals_C, l_vals_C = lorenz_curve(consumption_weighted.flatten())
+    consumption_gini =  gini(consumption.flatten(), w=D.flatten())
+
+    pre_tax_labor = np.stack( [ ((ss['IncNpretax'] )* ss['N'] , (1-ss['N']) * (ss['IncSpretax'] ))])
+    pre_tax_labor_weighted = pre_tax_labor * D 
+    f_vals_pretax, l_vals_pretax = lorenz_curve(pre_tax_labor_weighted.flatten())
+    pre_tax_gini =  gini(pre_tax_labor.flatten(), w=D.flatten())
+
+    post_tax_labor = np.stack( [ ((ss['IncNpretax'] *(1- ss['tIncN']))* ss['N'] , (1-ss['N']) * (ss['IncSpretax'] *(1- ss['tIncS'])))])
+    post_tax_labor_weighted = post_tax_labor * D
+    f_vals_posttax, l_vals_posttax = lorenz_curve(post_tax_labor_weighted.flatten())
+    post_tax_gini =  gini(post_tax_labor.flatten(), w=D.flatten())
+    
+    pylab.rcParams.update(params)
+    fig, ((ax1, ax2)) = plt.subplots(1,2)
+    ax1.plot(f_vals_A, l_vals_A, label='Wealth (gini = %s)' %float("{:.2f}".format(wealth_gini)))
+    ax1.plot(f_vals_C, l_vals_C, label='Consumption (gini = %s)' %float("{:.2f}".format(consumption_gini)))
+    ax2.plot(f_vals_pretax, l_vals_pretax, label='Pre-tax labor income (gini = %s)' %float("{:.2f}".format(pre_tax_gini)), linestyle = '-.')
+    ax2.plot(f_vals_posttax, l_vals_posttax, label='Post-tax labor income (gini = %s)' %float("{:.2f}".format(post_tax_gini)), linestyle = '--') 
+    ax1.legend()
+    ax2.legend()
+    plt.gcf().set_size_inches(7, 5) 
+    plt.rcParams.update({'axes.titlesize': 'x-large'})
+    plt.rcParams.update({'axes.labelsize': 'small'})
+    plt.rcParams.update({'xtick.labelsize': 'xx-small', 'ytick.labelsize': 'xx-small'})
+    fig.tight_layout()    
+    plt.show()
+
+
+
+    #%% Finding rate analysis 
+    
+    Time = 300  
+    rhos = 0.8
+    dq = 0.01 *ss['q'] * rhos**(np.arange(Time)[:, np.newaxis])
+
+    
+    ttt = np.arange(0,Time)
+
+    tvar = {'time' : ttt ,'q' : ss['q'] + dq} 
+    td_q =   EGMhousehold.td(ss, returnindividual = True, monotonic=True, **tvar)
+
+   
+
+    dC_agg = (td_q['C']/ss['C']-1)*100
+    #plt.plot(dC_agg[:30])
+    #plt.show()
+    D_axis1 = np.sum( td_q['D'][:,:,:], axis = 2)
+    dC_by_a = np.sum((td_q['c'][:,:,:] / ss['c'][np.newaxis,:,:]-1) *  ss['pi_e'][np.newaxis,:,np.newaxis], axis = 1) 
+    
+    q_el = dC_by_a[0,:] / (0.01)
+    plot_a_max = 40
+    C_share = 100 * np.sum(ss['c'][:,:] * ss['D'][:,:], axis = 0) / ss['C']
+    plt.plot(ss['a_grid'],q_el)
+    plt.xlim([ss['a_grid'][0],plot_a_max])
+    
+    aD = np.sum(ss['D'], axis = 0)
+    nBins = 20 
+    a_binned = np.empty([nBins])
+    C_binned = np.empty([nBins])
+    nA = ss['a_grid'].size
+    step = nA / nBins
+    step = int(step)
+    for k in range(nBins):     
+        a_binned[k] = np.median(ss['a_grid'][k * step:step*(1+k)])
+        C_binned[k] = np.sum(C_share[k * step:step*(1+k)] * aD[k * step:step*(1+k)])
+        
+#%%
+
+    from scipy.stats import binned_statistic
+    
+    nbins = 40
+    bin_means, left_edge, right_edge = binned_statistic(ss['a_grid'], C_share.flatten(), bins=nbins, range=(ss['a_grid'][0], plot_a_max)) 
+
+    pylab.rcParams.update(params)
+    fig, ax1 = plt.subplots()
+    
+    
+    #ax2.bar(a_binned, C_binned,  color = 'grey', edgecolor  = 'black')    
+    pylab.rcParams.update(params)
+    ax2 = ax1.twinx()
+    ax2.plot(ss['a_grid'], q_el)
+    ax1.bar(left_edge[:-1], bin_means,  color = 'grey', edgecolor  = 'black', alpha = 0.5, width = (plot_a_max-ss['a_grid'][0]) / nbins)    
+    #bins = np.linspace(ss['a_grid'][0], plot_a_max, 150)
+    #ax1.hist(ss['c'].flatten(), bins=bins, weights = ss['D'].flatten(), color = 'grey', edgecolor  = 'black', alpha = 0.5)
+    #ax1.hist(C_share.flatten(), bins=bins, weights = np.ones(250), color = 'grey', edgecolor  = 'black' , alpha = 0.5)
+
+    ax1.set_ylim([0,2])
+    ax2.set_xlim([ss['a_grid'][0]*2,plot_a_max])
+    #ax2.set_ylim([0,2])
+    #ax1.legend(loc="center right")
+    ax1.set_xlabel('Assets')
+    ax1.set_ylabel('Elasticity of Consumption to Job finding rate', labelpad=35)
+    ax2.set_ylabel('Share of aggregate Consumption', labelpad=35)
+    
+    pylab.rcParams.update(params)
+    ax2.grid(None)
+    ax1.yaxis.tick_right()
+    ax2.yaxis.tick_left()
+    plt.rcParams.update({'axes.titlesize': 'x-large'})
+    plt.rcParams.update({'axes.labelsize': 'small'})
+    plt.rcParams.update({'xtick.labelsize': 'xx-small', 'ytick.labelsize': 'xx-small'})    
+    plt.tight_layout()
+    #plt.savefig('plots/calibration/q_elasticity.pdf')    
+    plt.show()         
+
+
+
+#%%
+
+    #perc = weighted_quantile(ss['a'].flatten(), 20,  sample_weight=ss['D'].flatten())    
+    perc = find_perc_in_dist(ss['a'].flatten(), ss['D'].flatten(), 100)  
+    print(perc)
+
+
+
+#%%
+
+    I = np.sum(ss['Incagg'] * ss['D'], axis = 0) / np.sum( ss['D'], axis = 0)
+    fin_I = ss['a_grid'] * ss['ra']
+    m  =  I + fin_I
+    
+    fin_I_rel = 100 * fin_I / m
+    I_rel = 100 * I / m
+    
+    
+    fig, ax = plt.subplots()
+    labels = ["Financial Income ", "labor Income"]
+    
+    
+    ax.stackplot(a_perces, fin_I_rel, I_rel, labels=labels)
+    ax.legend(loc='upper left')
+    ax.margins(0, 0) # Set margins to avoid "whitespace"
+    plt.show()
+
+#%%
+
+dFinI = 100 * 0.00025 * ss['a_grid'] / ss['w']
+
+#plt.plot(ss['a_grid'], dFinI)
+plt.plot(a_perces, dFinI)
+
+
+
+
+#%%
+print(   min(ss['a_grid'] * ss['ra']) )
+
+
+print(  min(ss['IncS'].flatten()) )
+
+#%%
+
+    Time = 200
+    t = np.arange(0,Time)
+    
+    dra1 = - 0.0025  * 0.6**(np.arange(Time))
+    raTot = sum(dra1)
+    dra2 = raTot  * 0.8**(np.arange(Time)) / sum(0.8**(np.arange(Time)))
+    dra3 = raTot  * 0.9**(np.arange(Time)) / sum(0.9**(np.arange(Time)))
+    
+    dq1 = 0.05 * ss['q'] * 0.6**(np.arange(Time))
+    qTot = sum(dq1)
+    dq2 = qTot  * 0.8**(np.arange(Time)) / sum(0.8**(np.arange(Time)))
+    dq3 = qTot  * 0.9**(np.arange(Time)) / sum(0.9**(np.arange(Time)))
+    
+    ra_list = [dra1, dra2, dra3]
+    q_list = [dq1, dq2, dq3]    
+    dC_ra = []
+    dC_q = []
+    for j in range(3):
+        tvar       = {'time' : t, 'ra' :ss['ra'] + ra_list[j] }
+        td       =   EGMhousehold.td(ss,       returnindividual = False, monotonic=True, **tvar)          
+        dC_ra.append((td['C']/ss['C'] -1)*100) 
+        tvar       = {'time' : t, 'q' : ss['q'] + q_list[j] }
+        td       =   EGMhousehold.td(ss,       returnindividual = False, monotonic=True, **tvar)          
+        dC_q.append((td['C']/ss['C'] -1)*100) 
+
+#%%
+
+    pylab.rcParams.update(params)
+    fig, ((ax1, ax2)) = plt.subplots(1,2)
+    tplot = 21 
+    x_t = np.arange(0,tplot)
+
+    ax1.set_ylabel('Pct. Points Change')  
+    ax1.plot(x_t, 100*dra1[:tplot], label = r'$\rho$ = %s' %float("{:.1f}".format(0.6)))
+    ax1.plot(x_t, 100*dra2[:tplot], label = r'$\rho$ = %s' %float("{:.1f}".format(0.8)))
+    ax1.plot(x_t, 100*dra3[:tplot], label = r'$\rho$ = %s' %float("{:.1f}".format(0.9)), color = 'darkgreen')
+    ax1.set_title('Interest rate shock')
+    ax1.plot(np.zeros(tplot),  linestyle='--', linewidth=1, color='black')
+    ax1.set_xlabel('quarters')
+    ax1.legend(loc = 'best'  )
+    
+    ax2.set_ylabel('Pct. Change')  
+    ax2.plot(x_t, 100*dq1[:tplot]/ss['q'], label = r'$\rho$ = %s' %float("{:.1f}".format(0.6)))
+    ax2.plot(x_t, 100*dq2[:tplot]/ss['q'], label = r'$\rho$ = %s' %float("{:.1f}".format(0.8)))
+    ax2.plot(x_t, 100*dq3[:tplot]/ss['q'], label = r'$\rho$ = %s' %float("{:.1f}".format(0.9)), color = 'darkgreen')
+    ax2.set_title('Job-finding rate shock')
+    ax2.plot(np.zeros(tplot),  linestyle='--', linewidth=1, color='black')
+    ax2.set_xlabel('quarters')
+    #ax2.legend(loc = 'best'  )
+    
+    M = 5
+    xticks = ticker.MaxNLocator(M)
+    ax2.xaxis.set_major_locator(xticks)
+    ax1.xaxis.set_major_locator(xticks)   
+        
+    plt.gcf().set_size_inches(7,2.5) 
+    plt.rcParams.update({'axes.titlesize': 'x-large'})
+    plt.rcParams.update({'axes.labelsize': 'small'})
+    plt.rcParams.update({'xtick.labelsize': 'xx-small', 'ytick.labelsize': 'xx-small'})
+    fig.tight_layout()  
+    plt.savefig('plots/calibration/ra_q_shocks.pdf') 
+    plt.show()    
+
+
+#%%
+
+    pylab.rcParams.update(params)
+    fig, ((ax1, ax2)) = plt.subplots(1,2)
+    tplot = 21 
+    x_t = np.arange(0,tplot)
+
+    ax1.set_ylabel('Pct. Change in C')  
+    ax1.plot(x_t, dC_ra[0][:tplot], label = r'$\rho$ = %s' %float("{:.1f}".format(0.6)))
+    ax1.plot(x_t, dC_ra[1][:tplot], label = r'$\rho$ = %s' %float("{:.1f}".format(0.8)))
+    ax1.plot(x_t, dC_ra[2][:tplot], label = r'$\rho$ = %s' %float("{:.1f}".format(0.9)), color = 'darkgreen')
+    ax1.set_title('Interest rate shock')
+    ax1.plot(np.zeros(tplot),  linestyle='--', linewidth=1, color='black')
+    ax1.set_xlabel('quarters')
+    ax1.legend(loc = 'best'  )
+    yticks = ticker.MaxNLocator(5)
+    ax1.yaxis.set_major_locator(yticks)
+    
+    ax2.set_ylabel('Pct. Change in C')  
+    ax2.plot(x_t, dC_q[0][:tplot], label = r'$\rho$ = %s' %float("{:.1f}".format(0.6)))
+    ax2.plot(x_t, dC_q[1][:tplot], label = r'$\rho$ = %s' %float("{:.1f}".format(0.8)))
+    ax2.plot(x_t, dC_q[2][:tplot], label = r'$\rho$ = %s' %float("{:.1f}".format(0.9)), color = 'darkgreen')
+    ax2.set_title('Job-finding rate shock')
+    ax2.plot(np.zeros(tplot),  linestyle='--', linewidth=1, color='black')
+    ax2.set_xlabel('quarters')
+
+    yticks = ticker.MaxNLocator(5)
+    ax2.yaxis.set_major_locator(yticks)   
+
+    M = 5
+    xticks = ticker.MaxNLocator(M)
+    ax2.xaxis.set_major_locator(xticks)
+    ax1.xaxis.set_major_locator(xticks)   
+
+    
+    plt.gcf().set_size_inches(7,2.5) 
+    plt.rcParams.update({'axes.titlesize': 'x-large'})
+    plt.rcParams.update({'axes.labelsize': 'small'})
+    plt.rcParams.update({'xtick.labelsize': 'xx-small', 'ytick.labelsize': 'xx-small'})
+    fig.tight_layout()  
+    plt.savefig('plots/calibration/ra_q_shocks_C.pdf') 
+    plt.show()
+    
+    
+    
+    
+    
+    
