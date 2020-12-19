@@ -85,6 +85,7 @@ u = data['u'].to_frame()
 u_qtr = u.resample('QS').mean()
 #hej.index = hej.index.dt.to_period('Q')
 
+
 vac_qtr = data_rb.resample('QS').mean()
 
 years = vac_qtr.index.year
@@ -127,9 +128,35 @@ ax.set_ylabel('Vacancy Rate')
 pylab.rcParams.update(params)
    
 plt.tight_layout()
-plt.savefig('plots/Beveridge.pdf')  
+#plt.savefig('plots/Beveridge.pdf')  
 plt.show()
 
+#%%
+import statsmodels.api as sm
+
+gdp = data['GDP'].to_frame()
+gdpdef = data['deflator'].to_frame()
+realgdp = np.log(gdp / gdpdef)
+
+# hp filter
+years = realgdp.index.year
+realgdp_list = (years >= 1951) & (years <= 2003)
+realgdp_cycle, _ = sm.tsa.filters.hpfilter(realgdp[realgdp_list], 1600)
+
+years = u.index.year
+u_list = (years >= 1951) & (years <= 2003)
+u_cycle, _ = sm.tsa.filters.hpfilter(u[u_list], 129600)
+
+years = data_rb.index.year
+data_rb_list = (years >= 1951) & (years <= 2003)
+vac_cycle, _ = sm.tsa.filters.hpfilter(data_rb[data_rb_list], 129600)
+
+u_cycle_qtr = u_cycle.resample('QS').mean()
+vac_cycle_qtr = vac_cycle.resample('QS').mean()
+
+
+
+np.savez('U_V_data', A = realgdp_cycle, B = u_cycle_qtr, C = vac_cycle_qtr)
 
 
 

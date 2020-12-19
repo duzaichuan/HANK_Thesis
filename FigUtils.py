@@ -16,9 +16,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.pylab as pylab
 plt.style.use('ggplot')
-#plt.style.use('bmh')
 
-#%config InlineBackend.figure_format = 'retina'
 
 params = {'legend.fontsize': 'small',
           'figure.figsize': (7/1.8, 5/1.8),
@@ -33,7 +31,7 @@ import jacobian as jac
 import nonlinear
 
 import Utils2 
-from numba import vectorize, njit, jit, prange, guvectorize, cuda  
+from numba import vectorize, njit, jit, prange, guvectorize
 from scipy import optimize
 
 
@@ -225,21 +223,22 @@ def FigPlot3x3_new(ss, dMat, Ivar, tplotl, dZ):
         else: 
             dN = 100 *  dMat['N'] / ss['N']  
             ax2.plot(  dN[:tplotl], label = '$N$')
-            phours = False
-            if phours:
-                dh = 100 *  dMat['NS'] / ss['NS']  
-                ax2.plot(  dh[:tplotl], label = '$\ell$')
-            else:
-                dL = 100 *  dMat['L'] / ss['L']  
-                ax2.plot(  dL[:tplotl], label = '$L$',  linestyle='--')
-            ax2.legend(loc = 'lower right' )
+            # phours = False
+            # if phours:
+            #     dh = 100 *  dMat['NS'] / ss['NS']  
+            #     ax2.plot(  dh[:tplotl], label = '$\ell$')
+            # else:
+            #     dL = 100 *  dMat['L'] / ss['L']  
+            #     ax2.plot(  dL[:tplotl], label = '$L$',  linestyle='--')
+            #ax2.legend(loc = 'lower right' )
             ax2.set_title('Employment')   
             ax2.set_ylabel('Pct.')  
         ax2.plot(np.zeros(tplotl),  linestyle='--', linewidth=1, color='black')
         ax2.set_xlabel('quarters')
     if 'B' in dMat:
         ax5.plot(dMat['B'][:tplotl] * 100 / ss['B'], label = 'Bonds')
-    ax5.plot(dMat['p'][:tplotl] * 100 / ss['p'], label = 'Firm Equity', color = 'darkgreen',   linestyle = 'dotted' )
+    if 'p' in dMat:
+        ax5.plot(dMat['p'][:tplotl] * 100 / ss['p'], label = 'Firm Equity', color = 'darkgreen',   linestyle = 'dotted' )
     if 'A' in dMat:
         ax5.plot(dMat['A'][:tplotl] * 100 / ss['A'], label = 'Assets',  linestyle='--')
     ax5.plot(np.zeros(tplotl),  linestyle='--', linewidth=1, color='black')
@@ -285,7 +284,10 @@ def FigPlot3x3_new(ss, dMat, Ivar, tplotl, dZ):
             ax6.set_xlabel('quarters')
             ax6.set_title('Real Assets')        
     else:    
-            dr  = 100 * dMat['r']                    
+            if 'r' in dMat:
+                dr  = 100 * dMat['r']    
+            else:
+                dr =   np.zeros(tplotl)              
             #dra   = 100 * dMat['ra']
 
             ax6.plot( dr[:tplotl], label = 'r')
@@ -296,7 +298,7 @@ def FigPlot3x3_new(ss, dMat, Ivar, tplotl, dZ):
             #ax6.plot( dra[:tplotl], label = 'ra', linestyle = '--')
             #ax6.legend(loc = 'best' , prop={'size': 4} )
             
-    if 'C' in dMat:     
+    if 'C_agg' in dMat:     
         dC = 100 *  dMat['C_agg']/ ss['C']
         ax4.plot(  dC[:tplotl])
         ax4.plot(np.zeros(tplotl),  linestyle='--', linewidth=1, color='black')
@@ -665,10 +667,12 @@ def linear_non_linear_calc(ss, block_list, unknowns, targets, Z, dZ, shock_title
 
 def C_decomp(ss, dMat, tplotl, Time, HHblock, plot_simple, CVAR):
     
+    N = 'N_'
+    q = 'Eq'
     
     ttt = np.arange(0,Time)
     str_lst = []
-    xlist   = ['P', 'Ttd', 'ra', 'Tuni', 'w', 'q', 'N']
+    xlist   = ['P', 'Ttd', 'ra', 'Tuni', 'w', N, q]
     for k in xlist:
         if k in dMat:   
             str_lst.append(k)
@@ -696,18 +700,22 @@ def C_decomp(ss, dMat, tplotl, Time, HHblock, plot_simple, CVAR):
         td       =   HHblock.td(ss,       returnindividual = False, monotonic=False, **tvar)    
         C_decomp[j] = td[CVAR] -  ss[CVAR]
         dC_decomp_j   = 100 * C_decomp[j]  / ss[CVAR]
-        
+        lwidth = 1.4
         if not plot_simple:
             j_label = j
+            mstyle = None
+            msize =  1 
             if j == 'w':
                 j_label = 'Wages'
                 j_linestyle = 'dashdot'
-            if j == 'q':
+            if j == q:
                 j_label = 'Job Finding rate'    
                 j_linestyle = 'dotted'
-            if j == 'N':
+            if j == N:
                 j_label = 'Employment' 
-                j_linestyle = 'dotted'
+                j_linestyle = '-'
+                mstyle = 'D'
+                lwidth = 0.4
             if j == 'ra':
                 j_label = 'Interest Rate'
                 j_linestyle = 'dashed'
@@ -719,15 +727,19 @@ def C_decomp(ss, dMat, tplotl, Time, HHblock, plot_simple, CVAR):
                 j_linestyle = 'dashdot'        
                 next(ax._get_lines.prop_cycler) 
             if j =='ra':                
-                ax.plot( dC_decomp_j[:tplotl] , label = j_label, linestyle = j_linestyle , color = 'darkgreen')
-            elif j =='N':                
-                ax.plot( dC_decomp_j[:tplotl] , label = j_label, linestyle = j_linestyle , color = 'mediumblue')                
+                ax.plot( dC_decomp_j[:tplotl] , label = j_label, linestyle = j_linestyle , color = 'darkgreen', linewidth = lwidth)
+            elif j == N:                
+                ax.plot( dC_decomp_j[:tplotl] , label = j_label, linestyle = j_linestyle , color = 'mediumblue', linewidth = lwidth, marker = mstyle, markersize = msize)     
+            elif j == q:                
+                ax.plot( dC_decomp_j[:tplotl] , label = j_label, linestyle = j_linestyle , color = 'firebrick', linewidth = lwidth)  
+            elif j == 'w':                
+                ax.plot( dC_decomp_j[:tplotl] , label = j_label, linestyle = j_linestyle , color = 'orange', linewidth = lwidth)              
             else:
-                ax.plot( dC_decomp_j[:tplotl] , label = j_label, linestyle = j_linestyle )
+                ax.plot( dC_decomp_j[:tplotl] , label = j_label, linestyle = j_linestyle, linewidth = lwidth )
             i += 1 
             
     if plot_simple:
-        dN =  100 * (C_decomp['N'] + C_decomp['q'])  / ss[CVAR]
+        dN =  100 * (C_decomp[N] + C_decomp[q])  / ss[CVAR]
         if 'Tuni' in dMat:
             dT =  100 * (C_decomp['Tuni'] + C_decomp['w'])  / ss[CVAR]
             ax.plot( dT[:tplotl] , label = 'Transfers + Wages', linestyle = 'dashdot', color = 'mediumblue'  )
@@ -774,7 +786,7 @@ def C_decomp(ss, dMat, tplotl, Time, HHblock, plot_simple, CVAR):
     ax.set_ylabel('Pct. change in C') 
 
     
-    plt.gcf().set_size_inches(7/1.2, 5/1.5) 
+    fig.set_size_inches(7/1.2, 4/1.2) 
     plt.rcParams.update({'axes.titlesize': 'x-large'})
     plt.rcParams.update({'axes.labelsize': 'small'})
     plt.rcParams.update({'xtick.labelsize': 'xx-small', 'ytick.labelsize': 'xx-small'})
@@ -1037,9 +1049,11 @@ def Inequality_plots_compare(ss, ss_new, tplotl, Time, dMat, dMat_new, HHblock )
 
 def C_decomp_compare(ss, New_ss, dMat, dMat_new, tplotl, Time, HHblock, cvar):
     
-    
+    sterm = False
+    Nvar = 'N_'
+    qvar = 'Eq'
     ttt = np.arange(0,Time)
-    str_lst = ['w', 'q', 'N', 'ra']
+    str_lst = ['w', qvar, Nvar, 'ra']
     dispTuni = False
     if 'Tuni' in dMat:   
         dispTuni = True
@@ -1059,23 +1073,27 @@ def C_decomp_compare(ss, New_ss, dMat, dMat_new, tplotl, Time, HHblock, cvar):
         tvar       = {'time' : ttt, j : shocks[j]}
         tvar_low_b = {'time' : ttt, j : shocks_low_b[j]}
         return_ind = False
-        if j == 'N':
-            return_ind = True
+        # if j == 'N_':
+        #     return_ind = True
         td       =   HHblock.td(ss,       returnindividual = return_ind, monotonic=False, **tvar)            
         td_low_b =   HHblock.td(New_ss, returnindividual = return_ind, monotonic=False, **tvar_low_b)  
-        if j == 'N':
-            #Dtd     = N_mult('D', ss, td, ss['N']+dMat['N'])
-            #Dtd_new = N_mult('D', New_ss, td_low_b,  New_ss['N']+dMat_new['N'])
-            #dC_N_constr = utils.fast_aggregate(Dtd, td['c'])
-            #dC_N_constr_new = utils.fast_aggregate(Dtd_new, td_low_b['c'])
-            #C_decomp[j] = (dC_N_constr / ss[hvar]) -1
-            #C_decomp_low_b[j] = (dC_N_constr_new  / New_ss[hvar]) -1
+        # if j == 'N_':
+        #     #Dtd     = N_mult('D', ss, td, ss['N']+dMat['N'])
+        #     #Dtd_new = N_mult('D', New_ss, td_low_b,  New_ss['N']+dMat_new['N'])
+        #     #dC_N_constr = utils.fast_aggregate(Dtd, td['c'])
+        #     #dC_N_constr_new = utils.fast_aggregate(Dtd_new, td_low_b['c'])
+        #     #C_decomp[j] = (dC_N_constr / ss[hvar]) -1
+        #     #C_decomp_low_b[j] = (dC_N_constr_new  / New_ss[hvar]) -1
+        #     C_decomp[j] = (td[hvar] / ss[hvar]) -1
+        #     C_decomp_low_b[j] = (td_low_b[hvar]  / New_ss[hvar]) -1
+        #     C_decomp[j] -= C_decomp[j][tplotl] 
+        #     C_decomp[j] *= 0.7
+        #     C_decomp_low_b[j] -= C_decomp_low_b[j][tplotl]
+        #     C_decomp_low_b[j] *= 0.7
+        #else:
+        if sterm :
             C_decomp[j] = (td[hvar] / ss[hvar]) -1
-            C_decomp_low_b[j] = (td_low_b[hvar]  / New_ss[hvar]) -1
-            C_decomp[j] -= C_decomp[j][tplotl] 
-            C_decomp[j] *= 0.7
-            C_decomp_low_b[j] -= C_decomp_low_b[j][tplotl]
-            C_decomp_low_b[j] *= 0.7
+            C_decomp_low_b[j] = (td_low_b[hvar]  / td_low_b[hvar][Time-1]) -1            
         else:
             C_decomp[j] = (td[hvar] / ss[hvar]) -1
             C_decomp_low_b[j] = (td_low_b[hvar]  / New_ss[hvar]) -1
@@ -1102,11 +1120,11 @@ def C_decomp_compare(ss, New_ss, dMat, dMat_new, tplotl, Time, HHblock, cvar):
         dC_w   = 100 * C_decomp['w']  / dC_tot
         dC_w_low_b   = 100 * C_decomp_low_b['w']  / dC_tot_low_b
     dC_ra  = 100 * C_decomp['ra'] / dC_tot
-    dC_N   = 100 * C_decomp['N']  / dC_tot
-    dC_q   = 100 * C_decomp['q']  / dC_tot
+    dC_N   = 100 * C_decomp[Nvar]  / dC_tot
+    dC_q   = 100 * C_decomp[qvar]  / dC_tot
     dC_ra_low_b  = 100 * C_decomp_low_b['ra'] / dC_tot_low_b
-    dC_N_low_b   = 100 * C_decomp_low_b['N']  / dC_tot_low_b
-    dC_q_low_b   = 100 * C_decomp_low_b['q']  / dC_tot_low_b   
+    dC_N_low_b   = 100 * C_decomp_low_b[Nvar]  / dC_tot_low_b
+    dC_q_low_b   = 100 * C_decomp_low_b[qvar]  / dC_tot_low_b   
     
     ax1.plot(np.zeros(tplotl),  linestyle='--', linewidth=1, color='black')
     ax1.plot( dC_w[:tplotl] , label='Baseline')
@@ -1115,7 +1133,7 @@ def C_decomp_compare(ss, New_ss, dMat, dMat_new, tplotl, Time, HHblock, cvar):
         ax1.set_title('Wages + Transfers')
     else:
         ax1.set_title('Wages')
-    ax1.legend(loc='upper left')
+    ax1.legend(loc='best')
     ax1.set_xlabel('quarters')
     ax1.set_ylabel('Pct. change in C') 
     
@@ -1152,6 +1170,129 @@ def C_decomp_compare(ss, New_ss, dMat, dMat_new, tplotl, Time, HHblock, cvar):
     return fig  
 
 
+
+def C_decomp_compare_lin(ss, New_ss, dMat, dMat_new, tplotl, Time, HHblock, cvar):
+    
+    sterm = False
+    Nvar = 'N_'
+    qvar = 'Eq'
+    ttt = np.arange(0,Time)
+    str_lst = ['w', qvar, Nvar, 'ra']
+    dispTuni = False
+    if 'Tuni' in dMat:   
+        dispTuni = True
+        str_lst.append('Tuni')
+
+    shocks       = {}
+    shocks_low_b = {}
+    for x in str_lst:
+        shocks[x]       =  ss[x]     + dMat[x] 
+        shocks_low_b[x] =  New_ss[x] + dMat_new[x] 
+        
+    hvar = cvar
+    C_decomp       = {}
+    C_decomp_low_b = {}
+
+    for j in shocks:
+        #tvar       = {'time' : ttt, j : shocks[j]}
+        #tvar_low_b = {'time' : ttt, j : shocks_low_b[j]}
+        #return_ind = False
+        # if j == 'N_':
+        #     return_ind = True
+        exo = [j]
+        td       =   HHblock.jac(ss, Time, exo)            
+        td_low_b =   HHblock.jac(New_ss, Time, exo)  
+        # if j == 'N_':
+        #     #Dtd     = N_mult('D', ss, td, ss['N']+dMat['N'])
+        #     #Dtd_new = N_mult('D', New_ss, td_low_b,  New_ss['N']+dMat_new['N'])
+        #     #dC_N_constr = utils.fast_aggregate(Dtd, td['c'])
+        #     #dC_N_constr_new = utils.fast_aggregate(Dtd_new, td_low_b['c'])
+        #     #C_decomp[j] = (dC_N_constr / ss[hvar]) -1
+        #     #C_decomp_low_b[j] = (dC_N_constr_new  / New_ss[hvar]) -1
+        #     C_decomp[j] = (td[hvar] / ss[hvar]) -1
+        #     C_decomp_low_b[j] = (td_low_b[hvar]  / New_ss[hvar]) -1
+        #     C_decomp[j] -= C_decomp[j][tplotl] 
+        #     C_decomp[j] *= 0.7
+        #     C_decomp_low_b[j] -= C_decomp_low_b[j][tplotl]
+        #     C_decomp_low_b[j] *= 0.7
+        #else:
+        if sterm :
+            C_decomp[j] = (td[hvar][j] @ dMat[j] / ss[hvar]) 
+            C_decomp_low_b[j] = (td_low_b[hvar][j] @ dMat_new[j] / td_low_b[hvar][Time-1])            
+        else:
+            C_decomp[j] = (td[hvar][j] @ dMat[j]/ ss[hvar]) 
+            C_decomp_low_b[j] = (td_low_b[hvar][j] @ dMat_new[j] / New_ss[hvar]) 
+            
+
+
+    pylab.rcParams.update(params)
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2)
+
+    
+    
+    scale_by_C = False
+    if scale_by_C:
+        dC_tot       =  dMat[hvar] / ss[hvar]
+        dC_tot_low_b =  dMat_lower_b[hvar] / New_ss[hvar]
+    else: 
+        dC_tot       = 1
+        dC_tot_low_b = 1
+        
+    if dispTuni:
+        dC_w   = 100 * (C_decomp['w'] + C_decomp['Tuni'] )/ dC_tot
+        dC_w_low_b   = 100 * (C_decomp_low_b['w'] + C_decomp_low_b['Tuni']) / dC_tot_low_b
+    else:
+        dC_w   = 100 * C_decomp['w']  / dC_tot
+        dC_w_low_b   = 100 * C_decomp_low_b['w']  / dC_tot_low_b
+    dC_ra  = 100 * C_decomp['ra'] / dC_tot
+    dC_N   = 100 * C_decomp[Nvar]  / dC_tot
+    dC_q   = 100 * C_decomp[qvar]  / dC_tot
+    dC_ra_low_b  = 100 * C_decomp_low_b['ra'] / dC_tot_low_b
+    dC_N_low_b   = 100 * C_decomp_low_b[Nvar]  / dC_tot_low_b
+    dC_q_low_b   = 100 * C_decomp_low_b[qvar]  / dC_tot_low_b   
+    
+    ax1.plot(np.zeros(tplotl),  linestyle='--', linewidth=1, color='black')
+    ax1.plot( dC_w[:tplotl] , label='Baseline')
+    ax1.plot( dC_w_low_b[:tplotl] , label='Lower benefits',  linestyle='--')
+    if dispTuni:
+        ax1.set_title('Wages + Transfers')
+    else:
+        ax1.set_title('Wages')
+    ax1.legend(loc='best')
+    ax1.set_xlabel('quarters')
+    ax1.set_ylabel('Pct. change in C') 
+    
+    ax2.plot(np.zeros(tplotl),  linestyle='--', linewidth=1, color='black')
+    ax2.plot( dC_ra[:tplotl])
+    ax2.plot( dC_ra_low_b[:tplotl],  linestyle='--' )
+    ax2.set_title('Real Interest rate')
+    ax2.set_xlabel('quarters')
+    ax2.set_ylabel('Pct. change in C') 
+
+    ax3.plot(np.zeros(tplotl),  linestyle='--', linewidth=1, color='black')
+    ax3.plot( dC_N[:tplotl])
+    ax3.plot( dC_N_low_b[:tplotl] ,  linestyle='--')
+    ax3.set_title('Employment')
+    ax3.set_xlabel('quarters')
+    ax3.set_ylabel('Pct. change in C') 
+
+    ax4.plot(np.zeros(tplotl),  linestyle='--', linewidth=1, color='black')
+    ax4.plot( dC_q[:tplotl])
+    ax4.plot( dC_q_low_b[:tplotl] ,  linestyle='--')
+    ax4.set_title('Finding Rate')
+    ax4.set_xlabel('quarters')
+    ax4.set_ylabel('Pct. change in C') 
+    scale = 1.2
+    plt.gcf().set_size_inches(7/scale, 5/scale) 
+    plt.rcParams.update({'axes.titlesize': 'x-large'})
+    plt.rcParams.update({'axes.labelsize': 'small'})
+    plt.rcParams.update({'xtick.labelsize': 'xx-small', 'ytick.labelsize': 'xx-small'})
+    fig.tight_layout()
+    
+    #plt.savefig('plots/lower_b/C_decomp.pdf')
+    #plt.show() 
+
+    return fig  
 
 def C_decomp_compare_N_vs_U(ss, New_ss, dMat, dMat_new, tplotl, Time, HHblock):
     
@@ -1462,14 +1603,14 @@ def Welfare_equiv_by_N_Fig(ss, cons_equiv_N, cons_equiv_U, axzero):
     #ax2.legend(loc = 'best' )
     ax1.set_xticks(np.arange(len(x_dec)+1))
 
-    ax1.legend(loc = 'best' )
+    ax1.legend(loc = 'best' , prop = {'size' : 10})
     ax1.set_xlim(0.5,10.5)
     
-    min_y_lim = round(min(100*cons_equiv_N)*1.1,2)
+    min_y_lim = round(min(100*cons_equiv_U)*1.1,2)
     if axzero:
         ax1.set_ylim(min_y_lim,0)
     
-    plt.gcf().set_size_inches(1.3*7/2, 1.3*2.6) 
+    plt.gcf().set_size_inches(1.4*8/2, 1.4*2.6) 
     plt.rcParams.update({'axes.titlesize': 'small'})
     plt.rcParams.update({'axes.labelsize': 'small'})
     #plt.rcParams.update({'xtick.labelsize': 'xx-small', 'ytick.labelsize': 'xx-small'})    
@@ -1568,16 +1709,16 @@ def dC_decomp_by_N(dc_decomped_N, dc_decomped_U, ss):
     ax1.set_xticks(np.arange(len(x_dec)+1))
     ax2.set_xticks(np.arange(len(x_dec)+1))
     pylab.rcParams.update(params)
-    dC_totN = dc_decomped_N['w'] + dc_decomped_N['ra'] + dc_decomped_N['Tuni'] + dc_decomped_N['q']
-    dC_totU = -abs(dc_decomped_U['w']) + dc_decomped_U['ra'] + dc_decomped_U['Tuni'] + dc_decomped_U['q']
+    dC_totN = dc_decomped_N['w'] + dc_decomped_N['ra'] + dc_decomped_N['Tuni'] + dc_decomped_N['Eq']
+    dC_totU = -abs(dc_decomped_U['w']) + dc_decomped_U['ra'] + dc_decomped_U['Tuni'] + dc_decomped_U['Eq']
     
     
     ax1.bar(r1, dC_totN, width = barWidth, label = 'Total', color = 'firebrick')        
-    bars1 = np.add(dc_decomped_N['w'], dc_decomped_N['q']).tolist()
+    bars1 = np.add(dc_decomped_N['w'], dc_decomped_N['Eq']).tolist()
     bars2 = np.add(bars1, dc_decomped_N['ra']).tolist()
     
     p1 = ax1.bar(r2, dc_decomped_N['w'], width = barWidth, label = 'w', color = 'dodgerblue' )
-    p1 = ax1.bar(r2, dc_decomped_N['q'], bottom=dc_decomped_N['w'], width = barWidth, label = 'Finding rate', color = 'darkgreen')
+    p1 = ax1.bar(r2, dc_decomped_N['Eq'], bottom=dc_decomped_N['w'], width = barWidth, label = 'Finding rate', color = 'darkgreen')
     p1 = ax1.bar(r2, dc_decomped_N['ra'], bottom=bars1, width = barWidth, label = 'r', color = 'c')
     if 'Tuni' in dc_decomped_N:
         p1 = ax1.bar(r2, dc_decomped_N['Tuni'], bottom=bars2, width = barWidth, label = 'Transfers', color = 'orange')
@@ -1600,11 +1741,11 @@ def dC_decomp_by_N(dc_decomped_N, dc_decomped_U, ss):
     ax2.set_ylim([round(max_imp)-1,0])
 
     ax2.bar(r1, dC_totU, width = barWidth, label = 'Total', color = 'firebrick')        
-    bars1 = np.add(-abs(dc_decomped_U['w']), dc_decomped_U['q']).tolist()
+    bars1 = np.add(-abs(dc_decomped_U['w']), dc_decomped_U['Eq']).tolist()
     bars2 = np.add(bars1, dc_decomped_U['ra']).tolist()
     
     p1 = ax2.bar(r2, -abs(dc_decomped_U['w']), width = barWidth, label = 'w', color = 'dodgerblue' )
-    p1 = ax2.bar(r2, dc_decomped_U['q'], bottom=-abs(dc_decomped_N['w']), width = barWidth, label = 'Finding rate', color = 'darkgreen')
+    p1 = ax2.bar(r2, dc_decomped_U['Eq'], bottom=-abs(dc_decomped_N['w']), width = barWidth, label = 'Finding rate', color = 'darkgreen')
     p1 = ax2.bar(r2, dc_decomped_U['ra'], bottom=bars1, width = barWidth, label = 'r', color = 'c')
     if 'Tuni' in dc_decomped_U:
         p1 = ax2.bar(r2, dc_decomped_U['Tuni'], bottom=bars2, width = barWidth, label = 'Transfers', color = 'orange')
@@ -1627,10 +1768,51 @@ def dC_decomp_by_N(dc_decomped_N, dc_decomped_U, ss):
     return fig 
 
 
-def return_indi_HH(ss, dMat, Time, EGMhousehold):
+def return_indi_HH_lin(ss, dMat, Time, EGMhousehold):
     tvar_orgshock = {'time' : np.arange(0,Time)}
     
-    str_lst = ['w', 'q', 'N', 'ra']
+    str_lst = ['w', 'Eq', 'ra']
+    xlist   = ['Tuni']
+    for k in str_lst:
+        if k in dMat:      
+                tvar_orgshock[k] = ss[k] + dMat[k]
+    for k in xlist:
+        if k in dMat:      
+            str_lst.append(k)
+            tvar_orgshock[k] = ss[k] + dMat[k]
+            
+            
+    td =   EGMhousehold.jac(ss, Time, str_lst)
+    td_d = {}
+    for key in td:
+        td_d[key] = np.empty([Time]) + ss[key]
+        for key2 in str_lst:
+            td_d[key] =+  td[key][key2] @ dMat[key2]
+    return td_d, str_lst, tvar_orgshock
+
+
+def return_indi_HH_(ss, dMat, Time, EGMhousehold):
+    tvar_orgshock = {'time' : np.arange(0,Time)}
+
+    str_lst = ['w', 'Eq', 'N', 'ra']
+    xlist   = ['Tuni']
+    for k in str_lst:
+        if k in dMat:      
+                tvar_orgshock[k] = ss[k] + dMat[k]
+    for k in xlist:
+        if k in dMat:      
+            str_lst.append(k)
+            tvar_orgshock[k] = ss[k] + 0.9 * dMat[k]
+            
+
+    td =   EGMhousehold.td(ss, returnindividual = True, monotonic=False, **tvar_orgshock)
+
+    return td, str_lst, tvar_orgshock
+
+def return_indi_HH(ss, dMat, Time, EGMhousehold):
+    tvar_orgshock = {'time' : np.arange(0,Time)}
+
+    str_lst = ['w', 'Eq', 'N', 'ra']
     xlist   = ['Tuni']
     for k in str_lst:
         if k in dMat:      
@@ -1642,8 +1824,19 @@ def return_indi_HH(ss, dMat, Time, EGMhousehold):
             
 
     td =   EGMhousehold.td(ss, returnindividual = True, monotonic=False, **tvar_orgshock)
-    #tvar_orgshock['time'] = Time
+
     return td, str_lst, tvar_orgshock
+
+
+def return_indi_HH_specifick_shock(ss, dMat, Time, EGMhousehold, shock_str):
+    tvar_orgshock = {'time' : np.arange(0,Time)}
+       
+    tvar_orgshock[shock_str] = ss[shock_str] + dMat[shock_str]
+        
+
+    td =   EGMhousehold.td(ss, returnindividual = True, monotonic=False, **tvar_orgshock)
+    #tvar_orgshock['time'] = Time
+    return td
 
 
 def dC_decomp_p0(css, ss, dec, A, Atd, str_lst, deciles_org, tvar_orgshock, dMat, EGMhousehold):
@@ -1684,6 +1877,8 @@ def dC_decomp_p0(css, ss, dec, A, Atd, str_lst, deciles_org, tvar_orgshock, dMat
 
             dc_decomp[j][k] = dC
     return dc_decomp
+
+
 
 def  C_decomp_peak_change_by_N(css, ss, dec, A, Atd, str_lst, deciles_org, peakdC_index, tvar_orgshock, dMat, EGMhousehold):
     dc_decomped_N = {}
@@ -1770,12 +1965,12 @@ def dC_decomp_and_C_deciles(c_peak_decomped, ss):
     
     ax1.bar(r1, peak_dC_plot, width = barWidth, label = 'Total', color = 'firebrick') # hatch='///'     
     
-    bars1 = np.add(c_peak_decomped['w'], c_peak_decomped['q']).tolist()
+    bars1 = np.add(c_peak_decomped['w'], c_peak_decomped['Eq']).tolist()
     bars2 = np.add(bars1, c_peak_decomped['ra']).tolist()
     bars3 = np.add(bars2, c_peak_decomped['N']).tolist()
     
     p1 = ax1.bar(r2, c_peak_decomped['w'], width = barWidth, label = 'w', color = 'dodgerblue')
-    p1 = ax1.bar(r2, c_peak_decomped['q'], bottom=c_peak_decomped['w'], width = barWidth, label = 'Finding rate', color = 'darkgreen')
+    p1 = ax1.bar(r2, c_peak_decomped['Eq'], bottom=c_peak_decomped['w'], width = barWidth, label = 'Finding rate', color = 'darkgreen')
     p1 = ax1.bar(r2, c_peak_decomped['ra'], bottom=bars1, width = barWidth, label = 'r', color = 'c')
     p1 = ax1.bar(r2, c_peak_decomped['N'], bottom=bars2, width = barWidth, label = 'N', color = 'teal')
     if 'Tuni' in c_peak_decomped:
@@ -1867,4 +2062,372 @@ def FigPlot_newss_asset_vars(ss, dMat, Ivar, tplotl, dZ, scen):
 
     return fig
     
+ 
     
+'''Search and Matching stuff'''
+
+    
+def fig_LM_N_V_q(ss1,ss2,ss3,dMat1,dMat2,dMat3, plot_hori): 
+
+    pylab.rcParams.update(params)
+    fig, ((ax1, ax2, ax3)) = plt.subplots(1, 3)
+    
+    
+    ax1.plot(100 * dMat1['N'][:plot_hori]/ss1['N'], label = 'Standard')
+    ax1.plot(100 * dMat3['N'][:plot_hori]/ss3['N'], label = 'Sunk Cost - FR', color = 'Darkgreen')
+    ax1.legend() 
+    ax1.set_title('Employment')
+    
+    
+    
+    ax1.plot(np.zeros(plot_hori),  linestyle='--', linewidth=1, color='black')
+    ax2.plot(np.zeros(plot_hori),  linestyle='--', linewidth=1, color='black')
+    ax3.plot(np.zeros(plot_hori),  linestyle='--', linewidth=1, color='black')
+    
+    
+    ax2.plot(100 * dMat1['V'][:plot_hori]/ss1['V'], label = 'Standard')
+    ax2.plot(100 * dMat3['V'][:plot_hori]/ss3['V'], label = 'Sunk Cost - FR', color = 'Darkgreen')
+    ax2.set_title('Vacancies')
+    
+    ax3.plot(100 * dMat1['q'][:plot_hori]/ss1['q'], label = 'Standard')
+    ax3.plot(100 * dMat3['q'][:plot_hori]/ss3['q'], label = 'Sunk Cost - FR', color = 'Darkgreen')
+    ax3.set_title('Job-finding rate')
+    ax1.legend(loc='best',prop={'size': 7})
+    plot_simple = True
+    if plot_simple:        
+        ax2.plot(100 * dMat2['V'][:plot_hori]/ss2['V'], label = 'Sunk Cost - simple')
+        ax1.plot(100 * dMat2['N'][:plot_hori]/ss2['N'], label = 'Sunk Cost - simple')       
+        ax3.plot(100 * dMat2['q'][:plot_hori]/ss2['q'], label = 'Sunk Cost- simple')
+        
+    
+    ax1.set_xlabel('quarters')
+    ax1.set_ylabel('Pct. Deviation from SS')
+    ax2.set_xlabel('quarters')
+    ax2.set_ylabel('Pct. Deviation from SS')
+    ax3.set_xlabel('quarters')
+    ax3.set_ylabel('Pct. Deviation from SS')
+    fig.set_size_inches(7*1.3, 2*1.3) 
+    fig.tight_layout()
+      
+    return fig 
+ 
+def fig_LM_N_V_q_inc_destr(ss1,ss2,ss3,dMat1,dMat2,dMat3, plot_hori): 
+
+    pylab.rcParams.update(params)
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2)
+    
+    
+    ax1.plot(100 * dMat1['N'][:plot_hori]/ss1['N'], label = 'Standard')
+    ax1.plot(100 * dMat2['N'][:plot_hori]/ss2['N'], label = 'Sunk Cost - simple')
+    ax1.plot(100 * dMat3['N'][:plot_hori]/ss3['N'], label = 'Sunk Cost - FR', color = 'Darkgreen')
+    ax1.legend() 
+    ax1.set_title('Employment')
+    
+    
+    
+    ax1.plot(np.zeros(plot_hori),  linestyle='--', linewidth=1, color='black')
+    ax2.plot(np.zeros(plot_hori),  linestyle='--', linewidth=1, color='black')
+    ax3.plot(np.zeros(plot_hori),  linestyle='--', linewidth=1, color='black')
+    ax4.plot(np.zeros(plot_hori),  linestyle='--', linewidth=1, color='black')
+    
+    ax2.plot(100 * dMat1['V'][:plot_hori]/ss1['V'], label = 'Standard')
+    ax2.plot(100 * dMat2['V'][:plot_hori]/ss2['V'], label = 'Sunk Cost - simple')
+    ax2.plot(100 * dMat3['V'][:plot_hori]/ss3['V'], label = 'Sunk Cost - FR', color = 'Darkgreen')
+    ax2.set_title('Vacancies')
+    
+    ax3.plot(100 * dMat1['q'][:plot_hori]/ss1['q'], label = 'Standard')
+    ax3.plot(100 * dMat2['q'][:plot_hori]/ss2['q'], label = 'Sunk Cost- simple')
+    ax3.plot(100 * dMat3['q'][:plot_hori]/ss3['q'], label = 'Sunk Cost - FR', color = 'Darkgreen')
+    ax3.set_title('Job-finding rate')
+    ax1.legend(loc='best',prop={'size': 8})
+ 
+    ax4.plot(100 * dMat1['destr'][:plot_hori], label = 'Standard')
+    ax4.plot(100 * dMat2['destr'][:plot_hori], label = 'Sunk Cost - simple')
+    ax4.plot(100 * dMat3['destr'][:plot_hori], label = 'Sunk Cost - FR', color = 'Darkgreen')
+    ax4.set_title('Seperation Rate')    
+    ax4.set_xlabel('quarters')
+    ax4.set_ylabel('Pct. points Deviation from SS') 
+    
+    ax1.set_xlabel('quarters')
+    ax1.set_ylabel('Pct. Deviation from SS')
+    ax2.set_xlabel('quarters')
+    ax2.set_ylabel('Pct. Deviation from SS')
+    ax3.set_xlabel('quarters')
+    ax3.set_ylabel('Pct. Deviation from SS')
+    fig.set_size_inches(7/1.1,5/1.1 ) 
+    fig.tight_layout()
+      
+    return fig 
+
+
+     
+def fig_LM_N_V_q_destr(ss1,ss2,ss3,dMat1,dMat2,dMat3, dMat4, plot_hori): 
+
+    pylab.rcParams.update(params)
+    fig, ((ax1, ax2, ax3)) = plt.subplots(1, 3)
+    
+    
+    ax1.plot(100 * dMat1['N'][:plot_hori]/ss1['N'], label = 'Standard')
+    ax1.plot(100 * dMat2['N'][:plot_hori]/ss2['N'], label = 'Sunk Cost - simple')
+    ax1.plot(100 * dMat3['N'][:plot_hori]/ss3['N'], label = 'Sunk Cost - FR, $d\delta^O$', color = 'Darkgreen')
+    ax1.plot(100 * dMat4['N'][:plot_hori]/ss3['N'], label = 'Sunk Cost - FR, $d\delta^{NO}$', color = 'Darkgreen', linestyle = '--')
+    
+    ax1.legend() 
+    ax1.set_title('Employment')
+    plt.gcf().set_size_inches(7*1.3, 2*1.3) 
+    
+    
+    ax1.plot(np.zeros(plot_hori),  linestyle='--', linewidth=1, color='black')
+    ax2.plot(np.zeros(plot_hori),  linestyle='--', linewidth=1, color='black')
+    ax3.plot(np.zeros(plot_hori),  linestyle='--', linewidth=1, color='black')
+    
+    
+    ax2.plot(100 * dMat1['V'][:plot_hori]/ss1['V'], label = 'Standard')
+    ax2.plot(100 * dMat2['V'][:plot_hori]/ss2['V'], label = 'Sunk Cost - simple')
+    ax2.plot(100 * dMat3['V'][:plot_hori]/ss3['V'], label = 'Sunk Cost - FR', color = 'Darkgreen')
+    ax2.plot(100 * dMat4['V'][:plot_hori]/ss3['V'], label = 'Sunk Cost - FR', color = 'Darkgreen', linestyle ='--')
+    
+    ax2.set_title('Vacancies')
+    
+    ax3.plot(100 * dMat1['q'][:plot_hori]/ss1['q'], label = 'Standard')
+    ax3.plot(100 * dMat2['q'][:plot_hori]/ss2['q'], label = 'Sunk Cost- simple')
+    ax3.plot(100 * dMat3['q'][:plot_hori]/ss3['q'], label = 'Sunk Cost - FR', color = 'Darkgreen')
+    ax3.plot(100 * dMat4['q'][:plot_hori]/ss3['q'], label = 'Sunk Cost - FR', color = 'Darkgreen', linestyle ='--')
+    
+    ax3.set_title('Job-finding rate')
+    ax1.legend(loc='best',prop={'size': 6})
+    
+    ax1.set_xlabel('quarters')
+    ax1.set_ylabel('Pct. Deviation from SS')
+    ax2.set_xlabel('quarters')
+    ax2.set_ylabel('Pct. Deviation from SS')
+    ax3.set_xlabel('quarters')
+    ax3.set_ylabel('Pct. Deviation from SS')
+    fig.tight_layout()
+      
+    return fig   
+    
+      
+def fig_LM_N_V_q_destr_shock(ss1,ss2,dMat1,dMat2,dMat3, plot_hori, ss_simple, dMat_simple): 
+
+    pylab.rcParams.update(params)
+    fig, ((ax1, ax2, ax3)) = plt.subplots(1, 3)
+    
+    
+    ax1.plot(100 * dMat1['N'][:plot_hori]/ss1['N'], label = 'Standard')
+    ax1.plot(100 * dMat2['N'][:plot_hori]/ss2['N'], label = 'FR - $d\delta^{NO}$', color = 'Darkgreen')
+    ax1.plot(100 * dMat3['N'][:plot_hori]/ss2['N'], label = 'FR - $d\delta^{O}$', color = 'Darkgreen', linestyle ='--')
+    ax1.legend() 
+    ax1.set_title('Employment')
+    
+    
+    
+    ax1.plot(np.zeros(plot_hori),  linestyle='--', linewidth=1, color='black')
+    ax2.plot(np.zeros(plot_hori),  linestyle='--', linewidth=1, color='black')
+    ax3.plot(np.zeros(plot_hori),  linestyle='--', linewidth=1, color='black')
+    
+    ax2.plot(100 * dMat1['V'][:plot_hori]/ss1['V'], label = 'Standard')
+    ax2.plot(100 * dMat2['V'][:plot_hori]/ss2['V'], label = 'FR - $d\delta^{NO}$', color = 'Darkgreen')
+    ax2.plot(100 * dMat3['V'][:plot_hori]/ss2['V'], label = 'FR - $d\delta^{O}$', color = 'Darkgreen', linestyle ='--')
+    ax2.set_title('Vacancies')
+    
+    ax3.plot(100 * dMat1['q'][:plot_hori]/ss1['N'], label = 'Standard')
+    ax3.plot(100 * dMat2['q'][:plot_hori]/ss2['N'], label = 'FR - $d\delta^{NO}$', color = 'Darkgreen')
+    ax3.plot(100 * dMat3['q'][:plot_hori]/ss2['N'], label = 'FR - $d\delta^{O}$', color = 'Darkgreen', linestyle ='--')
+    ax3.set_title('Job-finding rate')
+    
+    
+    
+    plot_simple = True
+    if plot_simple:
+        s=0.7
+        ax1.plot(100 * dMat_simple['N'][:plot_hori]*s/ss_simple['N'], label = 'Simple FR', color = 'firebrick', linestyle = 'dotted' )
+        ax2.plot(100 * dMat_simple['V'][:plot_hori]*s/ss_simple['V'], label = 'Simple FR', color = 'firebrick', linestyle = 'dotted')
+        ax3.plot(100 * dMat_simple['q'][:plot_hori]*s/ss_simple['N'], label = 'Simple FR', color = 'firebrick', linestyle = 'dotted')
+            
+        
+    ax1.legend(loc='best',prop={'size': 8})
+ 
+    
+    ax1.set_xlabel('quarters')
+    ax1.set_ylabel('Pct. Deviation from SS')
+    ax2.set_xlabel('quarters')
+    ax2.set_ylabel('Pct. Deviation from SS')
+    ax3.set_xlabel('quarters')
+    ax3.set_ylabel('Pct. Deviation from SS')
+    plt.gcf().set_size_inches(7*1.3, 2*1.3) 
+
+    fig.tight_layout()
+      
+    return fig 
+
+
+
+
+def fig_LM_N_V_q_inc_destr_new_PE(ss1,ss2, dMat1_org, dMat1, dMat2_org, dMat2, plot_hori, ss_simple, dMat_simple_org, dMat_simple): 
+
+    pylab.rcParams.update(params)
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2)
+    
+    lstyle1 = '--'
+    lstyle2 = '-'
+    
+    ax1.plot(100 * dMat1['N'][:plot_hori]/ss1['N'], label = 'Standard - endo. sep.', linestyle = lstyle1)
+    ax1.plot(100 * dMat1_org['N'][:plot_hori]/ss1['N'], label = 'Standard', color = '#E24A33', linestyle = lstyle2)
+    ax1.plot(100 * dMat2['N'][:plot_hori]/ss2['N'], label = 'FR - endo. sep.', color = 'Darkgreen', linestyle = lstyle1)
+    ax1.plot(100 * dMat2_org['N'][:plot_hori]/ss2['N'], label = 'FR', color = 'Darkgreen', linestyle = lstyle2)
+    ax1.legend() 
+    ax1.set_title('Employment')
+    
+    
+    
+    ax1.plot(np.zeros(plot_hori),  linestyle='--', linewidth=1, color='black')
+    ax2.plot(np.zeros(plot_hori),  linestyle='--', linewidth=1, color='black')
+    ax3.plot(np.zeros(plot_hori),  linestyle='--', linewidth=1, color='black')
+    ax4.plot(np.zeros(plot_hori),  linestyle='--', linewidth=1, color='black')
+
+    ax2.plot(100 * dMat1['V'][:plot_hori]/ss1['V'], label = 'Standard', linestyle = lstyle1)
+    ax2.plot(100 * dMat1_org['V'][:plot_hori]/ss1['V'], label = 'Standard - exo. sep', color = '#E24A33', linestyle = lstyle2)
+    ax2.plot(100 * dMat2['V'][:plot_hori]/ss2['V'], label = 'FR', color = 'Darkgreen', linestyle = lstyle1)
+    ax2.plot(100 * dMat2_org['V'][:plot_hori]/ss2['V'], label = 'FR - exo. sep', color = 'Darkgreen', linestyle = lstyle2)
+    ax2.set_title('Vacancies')
+    
+    ax3.plot(100 * dMat1['q'][:plot_hori]/ss1['q'], label = 'Standard', linestyle = lstyle1)
+    ax3.plot(100 * dMat1_org['q'][:plot_hori]/ss1['q'], label = 'Standard - exo. sep', color = '#E24A33', linestyle = lstyle2)
+    ax3.plot(100 * dMat2['q'][:plot_hori]/ss2['q'], label = 'FR', color = 'Darkgreen', linestyle = lstyle1)
+    ax3.plot(100 * dMat2_org['q'][:plot_hori]/ss2['q'], label = 'FR - exo. sep', color = 'Darkgreen', linestyle = lstyle2)
+    ax3.set_title('Job-finding rate')
+    ax1.legend(loc='best',prop={'size': 6})
+ 
+    ax4.plot(100 * dMat1['destr'][:plot_hori], label = 'Standard', linestyle = lstyle1)
+    ax4.plot(np.zeros(plot_hori), label = 'Standard - exo. sep', color = '#E24A33', linestyle = lstyle2)
+    ax4.plot(100 * dMat2['destr'][:plot_hori], label = 'FR', color = 'Darkgreen', linestyle = lstyle1)
+    ax4.plot(np.zeros(plot_hori), label = 'FR - exo. sep', color = 'Darkgreen', linestyle = lstyle2)
+    ax4.set_title('Seperation Rate')    
+    ax4.set_xlabel('quarters')
+    ax4.set_ylabel('Pct. points Deviation from SS') 
+    
+    plot_simple = True 
+    if plot_simple:
+        lstyle_simple = 'dotted'
+        ax1.plot(100 * dMat_simple['N'][:plot_hori]/ss_simple['N'], label = 'Simple FR - endo. sep.', color = 'firebrick', linestyle = lstyle_simple)
+        ax1.plot(100 * dMat_simple_org['N'][:plot_hori]/ss_simple['N'], label = 'Simple FR', color = 'firebrick', linestyle = '-')
+        ax2.plot(100 * dMat_simple['V'][:plot_hori]/ss_simple['V'], label = 'Simple FR - endo. sep.', color = 'firebrick', linestyle = lstyle_simple)
+        ax2.plot(100 * dMat_simple_org['V'][:plot_hori]/ss_simple['V'], label = 'Simple FR', color = 'firebrick', linestyle = '-')
+        ax3.plot(100 * dMat_simple['q'][:plot_hori]/ss_simple['q'], label = 'Simple FR - endo. sep.', color = 'firebrick', linestyle = lstyle_simple)
+        ax3.plot(100 * dMat_simple_org['q'][:plot_hori]/ss_simple['q'], label = 'Simple FR', color = 'firebrick', linestyle = '-')
+        ax4.plot(100 * dMat_simple['destr'][:plot_hori], label = 'Simple FR - endo. sep.', color = 'firebrick', linestyle = lstyle_simple)
+        ax4.plot(np.zeros(plot_hori), label = 'Simple FR', color = 'firebrick', linestyle = '-')
+                                                              
+    ax1.legend(loc='best',prop={'size': 6})        
+        
+    
+    ax1.set_xlabel('quarters')
+    ax1.set_ylabel('Pct. Deviation from SS')
+    ax2.set_xlabel('quarters')
+    ax2.set_ylabel('Pct. Deviation from SS')
+    ax3.set_xlabel('quarters')
+    ax3.set_ylabel('Pct. Deviation from SS')
+
+    
+    fig.set_size_inches(7/1.1,5/1.1 ) 
+
+    fig.tight_layout()
+      
+    return fig 
+
+
+
+def fig_LM_N_V_q_inc_destr_new(ss1,ss2, dMat1_org, dMat1, dMat2_org, dMat2, plot_hori, ss_simple, dMat_simple_org, dMat_simple): 
+
+    pylab.rcParams.update(params)
+    fig, ((ax1, ax2, ax3), (ax4, ax5, ax6)) = plt.subplots(2, 3)
+    
+    lstyle1 = '--'
+    lstyle2 = '-'
+    
+    ax1.plot(100 * dMat1['N'][:plot_hori]/ss1['N'], label = 'Standard - endo. sep.', linestyle = lstyle1)
+    ax1.plot(100 * dMat1_org['N'][:plot_hori]/ss1['N'], label = 'Standard', color = '#E24A33', linestyle = lstyle2)
+    
+    ax1.plot(100 * dMat2['N'][:plot_hori]/ss2['N'], label = 'FR - endo. sep.', color = 'Darkgreen', linestyle = lstyle1)
+    ax1.plot(100 * dMat2_org['N'][:plot_hori]/ss2['N'], label = 'FR', color = 'Darkgreen', linestyle = lstyle2)
+    
+    ax1.set_title('Employment')
+    
+    
+    
+    ax1.plot(np.zeros(plot_hori),  linestyle='--', linewidth=1, color='black')
+    ax2.plot(np.zeros(plot_hori),  linestyle='--', linewidth=1, color='black')
+    ax3.plot(np.zeros(plot_hori),  linestyle='--', linewidth=1, color='black')
+    ax4.plot(np.zeros(plot_hori),  linestyle='--', linewidth=1, color='black')
+    ax5.plot(np.zeros(plot_hori),  linestyle='--', linewidth=1, color='black')
+    ax6.plot(np.zeros(plot_hori),  linestyle='--', linewidth=1, color='black')
+    
+    ax2.plot(100 * dMat1['V'][:plot_hori]/ss1['V'], label = 'Standard', linestyle = lstyle1)
+    ax2.plot(100 * dMat1_org['V'][:plot_hori]/ss1['V'], label = 'Standard - exo. sep', color = '#E24A33', linestyle = lstyle2)
+    ax2.plot(100 * dMat2['V'][:plot_hori]/ss2['V'], label = 'FR', color = 'Darkgreen', linestyle = lstyle1)
+    ax2.plot(100 * dMat2_org['V'][:plot_hori]/ss2['V'], label = 'FR - exo. sep', color = 'Darkgreen', linestyle = lstyle2)
+    ax2.set_title('Vacancies')
+    
+    ax3.plot(100 * dMat1['q'][:plot_hori]/ss1['q'], label = 'Standard', linestyle = lstyle1)
+    ax3.plot(100 * dMat1_org['q'][:plot_hori]/ss1['q'], label = 'Standard - exo. sep', color = '#E24A33', linestyle = lstyle2)
+    ax3.plot(100 * dMat2['q'][:plot_hori]/ss2['q'], label = 'FR', color = 'Darkgreen', linestyle = lstyle1)
+    ax3.plot(100 * dMat2_org['q'][:plot_hori]/ss2['q'], label = 'FR - exo. sep', color = 'Darkgreen', linestyle = lstyle2)
+    ax3.set_title('Job-finding rate')
+    ax1.legend(loc='best',prop={'size': 6})
+ 
+    ax6.plot(100 * dMat1['destr'][:plot_hori], label = 'Standard', linestyle = lstyle1)
+    ax6.plot(np.zeros(plot_hori), label = 'Standard - exo. sep', color = '#E24A33', linestyle = lstyle2)
+    ax6.plot(100 * dMat2['destr'][:plot_hori], label = 'FR', color = 'Darkgreen', linestyle = lstyle1)
+    ax6.plot(np.zeros(plot_hori), label = 'FR - exo. sep', color = 'Darkgreen', linestyle = lstyle2)
+    ax6.set_title('Seperation Rate')    
+    ax6.set_xlabel('quarters')
+    ax6.set_ylabel('Pct. points Deviation from SS') 
+    
+
+    ax4.plot(100 * dMat1['CTD'][:plot_hori]/ss1['CTD'], label = 'Standard', linestyle = lstyle1)
+    ax4.plot(100 * dMat1_org['CTD'][:plot_hori]/ss1['CTD'], label = 'Standard - exo. sep', color = '#E24A33', linestyle = lstyle2)
+    ax4.plot(100 * dMat2['CTD'][:plot_hori]/ss2['CTD'], label = 'FR', color = 'Darkgreen', linestyle = lstyle1)
+    ax4.plot(100 * dMat2_org['CTD'][:plot_hori]/ss2['CTD'], label = 'FR - exo. sep', color = 'Darkgreen', linestyle = lstyle2)
+    ax4.set_title('Consumption')
+
+    ax5.plot(100 * dMat1['Y'][:plot_hori]/ss1['Y'], label = 'Standard', linestyle = lstyle1)
+    ax5.plot(100 * dMat1_org['Y'][:plot_hori]/ss1['Y'], label = 'Standard - exo. sep', color = '#E24A33', linestyle = lstyle2)
+    ax5.plot(100 * dMat2['Y'][:plot_hori]/ss2['Y'], label = 'FR', color = 'Darkgreen', linestyle = lstyle1)
+    ax5.plot(100 * dMat2_org['Y'][:plot_hori]/ss2['Y'], label = 'FR - exo. sep', color = 'Darkgreen', linestyle = lstyle2)
+    ax5.set_title('Output')
+    
+    
+    plot_simple = True
+    if plot_simple: 
+        lstyle_simple = 'dotted'
+        ax1.plot(100 * dMat_simple['N'][:plot_hori]/ss_simple['N'], label = 'Simple FR - endo. sep.', color = 'firebrick', linestyle = lstyle_simple)
+        ax1.plot(100 * dMat_simple_org['N'][:plot_hori]/ss_simple['N'], label = 'Simple FR', color = 'firebrick', linestyle = '-')
+        ax2.plot(100 * dMat_simple['V'][:plot_hori]/ss_simple['V'], label = 'Simple FR - endo. sep.', color = 'firebrick', linestyle = lstyle_simple)
+        ax2.plot(100 * dMat_simple_org['V'][:plot_hori]/ss_simple['V'], label = 'Simple FR', color = 'firebrick', linestyle = '-')
+        ax3.plot(100 * dMat_simple['q'][:plot_hori]/ss_simple['q'], label = 'Simple FR - endo. sep.', color = 'firebrick', linestyle = lstyle_simple)
+        ax3.plot(100 * dMat_simple_org['q'][:plot_hori]/ss_simple['q'], label = 'Simple FR', color = 'firebrick', linestyle = '-')
+        ax4.plot(100 * dMat_simple['CTD'][:plot_hori]/ss_simple['CTD'], label = 'Simple FR - endo. sep.', color = 'firebrick', linestyle = lstyle_simple)
+        ax4.plot(100 * dMat_simple_org['CTD'][:plot_hori]/ss_simple['CTD'], label = 'Simple FR', color = 'firebrick', linestyle = '-')
+        ax5.plot(100 * dMat_simple['Y'][:plot_hori]/ss_simple['Y'], label = 'Simple FR - endo. sep.', color = 'firebrick', linestyle = lstyle_simple)
+        ax5.plot(100 * dMat_simple_org['Y'][:plot_hori]/ss_simple['Y'], label = 'Simple FR', color = 'firebrick', linestyle = '-')
+        ax6.plot(100 * dMat_simple['destr'][:plot_hori], label = 'Simple FR - endo. sep.', color = 'firebrick', linestyle = lstyle_simple)
+        ax6.plot(np.zeros(plot_hori), label = 'Simple FR', color = 'firebrick', linestyle = '-')
+                                                              
+    ax1.legend(loc='best',prop={'size': 6})
+
+            
+    ax1.set_xlabel('quarters')
+    ax1.set_ylabel('Pct. Deviation from SS')
+    ax2.set_xlabel('quarters')
+    ax2.set_ylabel('Pct. Deviation from SS')
+    ax3.set_xlabel('quarters')
+    ax3.set_ylabel('Pct. Deviation from SS')
+    ax5.set_xlabel('quarters')
+    ax5.set_ylabel('Pct. Deviation from SS')
+    
+    fig.set_size_inches(7*1.3, 4*1.3) 
+
+    fig.tight_layout()
+      
+    return fig 

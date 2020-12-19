@@ -9,19 +9,12 @@ Created on Sat Nov  7 15:07:36 2020
 import os
 import sys
 
-if os.name == 'posix':
-        os.chdir('/Users/nic/Dropbox/Thesis_Ideas/Dyn_Prog_SAM/sequence-jacobian-master_2')    
-else : 
-        os.chdir(os.path.dirname(os.path.abspath(__file__)))
-        #os.chdir('C:/Users/Nicolai/Dropbox/Thesis_Ideas/Dyn_Prog_SAM/sequence-jacobian-master_2')
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 import numpy as np
-from numba import vectorize, njit, jit, prange, guvectorize, cuda  
+from numba import vectorize, njit, jit, prange, guvectorize 
 #from numba import float64 as nbfloat64
  
-
-import pandas as pd
-
 
 import utils
 from het_block import het
@@ -29,12 +22,8 @@ from simple_block import simple
 import matplotlib.pyplot as plt
 import matplotlib.pylab as pylab
 from matplotlib import ticker
-#from interpolation import interp 
-#from interpolation.splines import extrap_options as xto
 
 plt.style.use('ggplot')
-#plt.style.use('bmh')
-#plt.style.use('fivethirtyeight')
 
 
 
@@ -75,9 +64,6 @@ from statsmodels.nonparametric.kde import KDEUnivariate # weighted kernel densit
 from types import SimpleNamespace
 
 from consav import upperenvelope, runtools 
-runtools.write_numba_config(disable=0,threads=4)
-
-
 import FigUtils  
 
 from quantecon import lorenz_curve
