@@ -57,13 +57,10 @@ import nonlinear
 #import hank
 import determinacy as det
 
-from consav.misc import  nonlinspace 
-
+from consav.grids import nonlinspace
 from statsmodels.nonparametric.kde import KDEUnivariate # weighted kernel density 
 
 from types import SimpleNamespace
-
-from consav import upperenvelope, runtools 
 import FigUtils  
 
 from quantecon import lorenz_curve

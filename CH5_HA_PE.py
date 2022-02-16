@@ -401,14 +401,14 @@ pylab.rcParams.update(params)
 fig, ((ax1, ax2)) = plt.subplots(1,2)
 
 ax1.plot(x_t, HANK_I_response, label = 'HA - Individual Effect', color = '#348ABD')  
-ax1.plot(x_t, dCC_TANK[:tplotl], label = 'TA', linestyle='--', color = 'darkgreen')  
+ax1.plot(x_t, dCC_TANK[:tplot], label = 'TA', linestyle='--', color = 'darkgreen')  
 ax1.legend(loc = 'best' )
-ax1.plot(np.zeros(tplotl),  linestyle='--', linewidth=1, color='black')
+ax1.plot(np.zeros(tplot),  linestyle='--', linewidth=1, color='black')
 
 ax2.plot(x_t, HANK_R_response, label = 'HA - Individual Effect', color = '#348ABD')  
-ax2.plot(x_t, dCC_TANK_ra[:tplotl], label = 'TA - HA calibration', linestyle='dashdot', color = 'firebrick')  
-ax2.plot(x_t, dCC_TANK_ra_calibrated[:tplotl], label = 'TA - re-calibrated', linestyle='--', color = 'darkgreen')  
-ax2.plot(np.zeros(tplotl),  linestyle='--', linewidth=1, color='black')
+ax2.plot(x_t, dCC_TANK_ra[:tplot], label = 'TA - HA calibration', linestyle='dashdot', color = 'firebrick')  
+ax2.plot(x_t, dCC_TANK_ra_calibrated[:tplot], label = 'TA - re-calibrated', linestyle='--', color = 'darkgreen')  
+ax2.plot(np.zeros(tplot),  linestyle='--', linewidth=1, color='black')
 ax2.legend(loc = 'best' )
 
 M = 5
@@ -444,11 +444,11 @@ td_N =   EGMhousehold.td(ss, returnindividual = True, monotonic=True, **tvar)
 Cvar = 'c'
 dN_ = ss['N'] + shift(dN, 0, cval=0)
 Dtd = N_mult('D', ss, td_N, dN_)
-dC_part_N, dD_part_N = FigUtils.HA_Decomp(ss, td_N, tplotl, Cvar, Dtd)
+dC_part_N, dD_part_N = FigUtils.HA_Decomp(ss, td_N, tplot, Cvar, Dtd)
 
 
 td_N_calibrated       = C_TANK_R.td(ss_copy_ra, N = ss['N'] + dN)
-dCC_TANK_N_calibrated = (td_N_calibrated['C'][:tplotl]/ td_N_calibrated['C'][200] -1)*100
+dCC_TANK_N_calibrated = (td_N_calibrated['C'][:tplot]/ td_N_calibrated['C'][200] -1)*100
 dCC_HANK_N = (dC_part_N / ss['C'] )*100
 
 
@@ -456,7 +456,7 @@ dq =  0.01  * 0.8 ** (np.arange(Time))
 tvar = {'time' : ttt ,'Eq' : ss['q'] + dq} 
 td_q =   EGMhousehold.td(ss, returnindividual = True, monotonic=True, **tvar)
 Cvar = 'ctd'
-dC_part_q, dD_part_q = FigUtils.HA_Decomp(ss, td_q, tplotl, Cvar, td_q['D'])
+dC_part_q, dD_part_q = FigUtils.HA_Decomp(ss, td_q, tplot, Cvar, td_q['D'])
 
         
 dcc_N = (dD_part_N + dC_part_N)/ss['C'] *100
@@ -467,13 +467,13 @@ fig, ((ax1, ax2)) = plt.subplots(1,2)
 
 ax1.plot(x_t, 100 * dD_part_N / ss['C'], label = 'Distributional Effect')    
 ax1.plot(x_t, 100 * dC_part_N / ss['C'], label = 'Individual Effect')  
-ax1.plot(x_t, dcc_N[:tplotl], label = 'Total', linestyle='--', color = 'darkgreen')  
-ax1.plot(np.zeros(tplotl),  linestyle='--', linewidth=1, color='black')  
+ax1.plot(x_t, dcc_N[:tplot], label = 'Total', linestyle='--', color = 'darkgreen')  
+ax1.plot(np.zeros(tplot),  linestyle='--', linewidth=1, color='black')  
 
 ax2.plot(x_t, 100 * dD_part_q / ss['C'], label = 'Distributional Effect')    
 ax2.plot(x_t, 100 * dC_part_q / ss['C'], label = 'Individual Effect')  
-ax2.plot(x_t, dcc_q[:tplotl], label = 'Total', linestyle='--', color = 'darkgreen')  
-ax2.plot(np.zeros(tplotl),  linestyle='--', linewidth=1, color='black')  
+ax2.plot(x_t, dcc_q[:tplot], label = 'Total', linestyle='--', color = 'darkgreen')  
+ax2.plot(np.zeros(tplot),  linestyle='--', linewidth=1, color='black')  
 
 
 M = 5

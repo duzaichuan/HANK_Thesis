@@ -22,8 +22,6 @@ from matplotlib import ticker
 plt.style.use('ggplot')
 
 
-#%config InlineBackend.figure_format = 'retina'
-
 from scipy.interpolate import interp2d
 from scipy.optimize import minimize 
 from solved_block import solved
@@ -52,21 +50,12 @@ from scipy.stats import norm
 import jacobian as jac
 import nonlinear
 import determinacy as det
-
-from consav.misc import  nonlinspace 
-
+from consav.grids import nonlinspace
 from statsmodels.nonparametric.kde import KDEUnivariate # weighted kernel density 
-
-#from types import SimpleNamespace
-
-#from consav import upperenvelope, runtools 
-#runtools.write_numba_config(disable=0,threads=4)
 
 
 import FigUtils  
-
-from quantecon import lorenz_curve
-
+#from quantecon import lorenz_curve
 from Utils2 import *
 
 
@@ -97,12 +86,9 @@ def EGMhousehold( EVa_p, Pi_p, Pi_ern, a_grid, Pi_seed, rstar, sBorrow, P, hss, 
     EVa_p  =                 np.reshape(EVa_p, (nBeta, ne, nN, nA))
     U_inc, _  = Unemp_benefit(Benefit_type, b, e_grid, pi_ern, ne, wss) 
     
-
     
     T =  transfers(pi_ern, Tss, e_grid, T_dist)
-
-    Ttd_ = transfers_td_e(pi_ern, Ttd, e_grid)
-    
+    Ttd_ = transfers_td_e(pi_ern, Ttd, e_grid)  
     T_agg =  np.broadcast_to(T[np.newaxis, :, np.newaxis] + Ttd_[np.newaxis, :, np.newaxis] + Tuni , (nBeta,ne, nA)) 
     
     # u'c(z_t, a_t) 
@@ -173,28 +159,19 @@ def EGMhousehold( EVa_p, Pi_p, Pi_ern, a_grid, Pi_seed, rstar, sBorrow, P, hss, 
     
     mu_N = cN ** (-1 / eis)
     mu_S = cS ** (-1 / eis)
-    # EnVa =  R[np.newaxis, :] *  (destr * (1-Eq)     * mu_S   + (1 - destr * (1-Eq)) * mu_N)
-    # EuVa =  R[np.newaxis, :] *  ((1-Eq* (1-destrO)) * mu_S   + Eq * (1-destrO)      * mu_N) 
     EnVa =  R[np.newaxis, :] *  (destr_L * (1-Eq)     * mu_S   + (1 - destr_L * (1-Eq)) * mu_N)
     EuVa =  R[np.newaxis, :] *  ((1-Eq* (1-destrO_L)) * mu_S   + Eq * (1-destrO_L)      * mu_N) 
                 
     Incagg = N_ * IncN + (1-N_) * IncS
 
     # Aggregate 
-    EVa =   np.reshape( np.stack((EnVa, EuVa), axis=-2), (ne*nBeta*nN, nA)) 
-    
-    # a =  np.reshape( np.stack((aN * dN, aS * dU), axis=-2), (ne*nBeta*nN, nA)) 
-    # c = np.reshape( np.stack((cN* dN, cS* dU), axis=-2), (ne*nBeta*nN, nA)) 
-    
+    EVa =   np.reshape( np.stack((EnVa, EuVa), axis=-2), (ne*nBeta*nN, nA))     
     a =  np.reshape( np.stack((aN , aS ), axis=-2), (ne*nBeta*nN, nA)) 
-    c = np.reshape( np.stack((cN, cS), axis=-2), (ne*nBeta*nN, nA)) 
-    
+    c = np.reshape( np.stack((cN, cS), axis=-2), (ne*nBeta*nN, nA))    
     UincAgg = np.reshape(np.broadcast_to( U_inc[np.newaxis, :, np.newaxis], (nBeta,ne, nA)), (ne*nBeta, nA)) 
         
 
     zeromat = np.zeros([ne*nBeta, nA])
-    
-
     tInc = np.reshape( np.stack((Ntaxes * dN, dU * Staxes), axis=-2), (ne*nBeta*nN, nA)) 
     UincAgg =np.reshape( np.stack((zeromat,  UincAgg), axis=-2), (ne*nBeta*nN, nA)) 
     
@@ -202,11 +179,6 @@ def EGMhousehold( EVa_p, Pi_p, Pi_ern, a_grid, Pi_seed, rstar, sBorrow, P, hss, 
     IncN = np.reshape( np.stack((IncN , zeromat), axis=-2), (ne*nBeta*nN, nA)) 
     IncS = np.reshape( np.stack((zeromat, IncS), axis=-2), (ne*nBeta*nN, nA)) 
     
-    #print(N)
-    #print(dU)
-    
-    # ctd = np.reshape( np.stack((cN* N + cS* (1-N), cN* N + cS* (1-N) ), axis=-2), (ne*nBeta*nN, nA)) 
-    # atd = np.reshape( np.stack((aN* N + aS* (1-N) , aN* N + aS* (1-N) ), axis=-2), (ne*nBeta*nN, nA)) 
     ctd = np.reshape( np.stack((cN, cS  ), axis=-2), (ne*nBeta*nN, nA)) 
     atd = np.reshape( np.stack((aN ,  aS), axis=-2), (ne*nBeta*nN, nA)) 
         
@@ -295,7 +267,7 @@ def transfers_td_e(pi_e, Div, e_grid):
     return T
 
 
-def res_calib_2(x, *args):
+def res_calib(x, *args):
     
     beta_mid, beta_var, beta_disp, vphi, kappa  = x
     
@@ -363,107 +335,6 @@ def res_calib_2(x, *args):
     return objective_func
 
 
-def res_calib_2_root(x, *args):
-    
-    beta_mid, beta_var, beta_disp  = x
- 
-    args_dict = args[0]
-
-    beta, pi_beta, Pi_beta = beta_dist(args_dict['nBeta'], beta_mid, args_dict['beta_var'] , args_dict['beta_disp'] , args_dict['dist_type'] )
-    Pi   =  np.kron(Pi_beta, args_dict['Pi_ern'])
-    pi_e =  np.kron(pi_beta, args_dict['pi_ern'])    
-    
-    penalty_var = 0 
-    if beta_var < 0.00001:
-        beta_var = 0.00005
-        beta, pi_beta, Pi_beta = beta_dist(nBeta, beta_mid, beta_var, beta_disp, dist_type )
-        Pi   =  np.kron(Pi_beta, Pi_ern)
-        pi_e =  np.kron(pi_beta, pi_ern)   
-        penalty_var += 1 + abs(beta_var)
-    
-    beta, pi_beta, Pi_beta = beta_dist(nBeta, beta_mid, beta_var, beta_disp, dist_type )
-    Pi   =  np.kron(Pi_beta, Pi_ern)
-    pi_e =  np.kron(pi_beta, pi_ern)
-     
- 
-
-
-
-    penalty = 0 
-    if max(beta) > beta_max:
-        beta_mid = beta_max - beta_var - 0.0001
-
-        beta, pi_beta, Pi_beta = beta_dist(nBeta, beta_mid, beta_var, beta_disp, dist_type )
-        Pi   =  np.kron(Pi_beta, Pi_ern)
-        pi_e =  np.kron(pi_beta, pi_ern)  
-        penalty += abs(1+x[0]+x[1])
-
-
-    if min(beta) < 0.2:
-        beta_mid = 0.2 + beta_var + 0.0001
-
-        beta, pi_beta, Pi_beta = beta_dist(nBeta, beta_mid, beta_var, beta_disp, dist_type )
-        Pi   =  np.kron(Pi_beta, Pi_ern)
-        pi_e =  np.kron(pi_beta, pi_ern)  
-        penalty += abs(1+x[0]+x[1])
-
-
-    print(beta_mid, beta_var, beta_disp )
-
-        
-    out =   EGMhousehold.ss(EnVa = EnVa, EuVa = EuVa, Pi = Pi, Pi_ern = Pi_ern, a_grid = a_grid, Pi_seed =  pi_e, e_grid = e_grid, 
-                     pi_e = pi_e, pi_ern = pi_ern, w = w  , ra = ra, beta = beta, eis = eis,
-                     q = q, N = N, destr = destr, b = b, T_dist = T_dist, pi_beta = pi_beta, 
-                           Tss = Tss, Ttd = 0, Tuni = 0, ssAvgInc = ssAvgInc, VAT = VAT,  
-                           nPoints = nPoints,  cs_avg = cs_avg, ttd_inf = ttd_inf,  tdiv = tdiv, ssflag=True)  
-      
-        
-    sBot, sMiddle, sTop, s10, sborrow_con = IneqStat(out, nPoints)
-
-    print('A-B', ((out['A'] - (B+p))  ), 'Middle s', ((sMiddle - 0.45)), 'Bottom',((sBot- 0.05 )), 'Borrow',sborrow_con - 0.07  )
-
-    return out['A'] - (B+p), sMiddle - 0.45, sborrow_con - 0.07
-
-def res_calib_3(x, *args):
-    
-    beta_mid  = x
- 
-    (EnVa, EuVa, Pi, Pi_ern, a_grid, pi_e, 
-                     e_grid, pi_ern, w, ra, eis,
-                     q, N, destr, b, T_dist, 
-                     div, lumpsum_T, ssAvgInc, VAT, pi_p,  
-                     nPoints, cs_avg, nBeta, dist_type, 
-                     beta_var, beta_disp, B, K, beta_max, phi_a, rho_a, ttd_inf, p, tdiv, Tss) = args 
-    
-    print(x )
-    
-    beta, pi_beta, Pi_beta = beta_dist(nBeta, beta_mid, beta_var, beta_disp, dist_type )
-    Pi   =  np.kron(Pi_beta, Pi_ern)
-    pi_e =  np.kron(pi_beta, pi_ern)
-    
-
-    print(      max(beta)   )    
-    
-    penalty = 0 
-    if max(beta) > beta_max -0.001:
-        beta_mid = beta_max - beta_var - 0.001
-        beta, pi_beta, Pi_beta = beta_dist(nBeta, beta_mid, beta_var, beta_disp, dist_type )
-        Pi   =  np.kron(Pi_beta, Pi_ern)
-        pi_e =  np.kron(pi_beta, pi_ern)  
-        penalty += abs(1+x) 
-    
-    
-    
-    
-    out =   EGMhousehold.ss(EnVa = EnVa, EuVa = EuVa, Pi = Pi, Pi_ern = Pi_ern, a_grid = a_grid, Pi_seed =  pi_e, 
-                             e_grid = e_grid, pi_e = pi_e, pi_ern = pi_ern, w = w  , ra = ra, beta = beta, eis = eis,
-                             q = q, N = N, destr = destr, b = b, T_dist = T_dist, pi_beta = pi_beta, phi_a = phi_a, rho_a = rho_a,
-                             Tss = Tss, Ttd = 0, Tuni = 0, ssAvgInc = ssAvgInc, VAT = VAT,  
-                             nPoints = nPoints, cs_avg = cs_avg, ttd_inf = ttd_inf, tdiv = tdiv, ssflag=True)
-
-    objective_func =   (out['A'] - (B+p))**2
-    print('A-B', (out['A'] - (B+p)))
-    return objective_func
 
 def res_calib_3_root(x, *args):
     
@@ -472,6 +343,11 @@ def res_calib_3_root(x, *args):
     args_dict = args[0]
 
     beta, pi_beta, Pi_beta = beta_dist(args_dict['nBeta'], beta_mid, args_dict['beta_var'] , args_dict['beta_disp'] , args_dict['dist_type'] )
+    #Pi   =  np.kron(Pi_beta, args_dict['Pi_ern'])
+    #pi_e =  np.kron(pi_beta, args_dict['pi_ern'])    
+
+
+    print(      max(beta)   )    
     
     penalty = 0 
     if max(beta) > args_dict['beta_max'] -0.0001:
@@ -495,7 +371,6 @@ def res_calib_3_root(x, *args):
         labor = 0 
     print('A-B', (Asset_mkt))
     return [Asset_mkt ]
-
 
 
 #%%    
@@ -572,7 +447,7 @@ def ss_calib(calib, settings):
     amax = 50  
    
     e_grid, pi_ern, Pi_ern = utils.markov_rouwenhorst(rho= 0.94, sigma= 0.7, N=ne) # Values from IMPC: rho = 0.91, variance = 0.92. Floden and linde (2001) for Sweden persistence values. 
-
+    h_con = True
     nPoints = [nBeta, ne, nA]
  
     beta_mid_guess  = 0.96513206
@@ -580,7 +455,7 @@ def ss_calib(calib, settings):
     beta_disp_guess =  0.06
     vphi_guess       = 2.125509040803471
     nonlintax_guess  =  0.049834087883106254
-
+    
     kappa_g = 0.04
     
 
@@ -607,6 +482,7 @@ def ss_calib(calib, settings):
     S, q, pMatch, V, Tight, ma, destrO, destrNO, nPos  = SAM_calib(U, destr, settings)
     Eq = q 
     
+    # Construct Markov matrix for unemployment-employment transition 
     pi_N = [N,1-N]    
     Pi_N = np.empty([2,2])
     Pi_N[0,0] = 1 - destr * (1-q)
@@ -741,7 +617,6 @@ def ss_calib(calib, settings):
            
     Z = Y / (K ** alpha * N**(1-alpha))
     Zss = Z     
-
     MPL = (1-alpha) * mc * Y / N
 
 
@@ -780,15 +655,10 @@ def ss_calib(calib, settings):
     assert abs(ra_test) < 1e-07
     
     Agg_C  = (ssAvgInc  - tax_N  - tax_S   + lumpsum_T + A_tot * r ) / (1+VAT) 
-
-    walras1 = 1 - Agg_C  - I - G - Vac_costs  - F_cost
-    print('Walras 1', walras1)
-    #assert abs(walras1) < 1e-8
-    #print((100*Vac_costs/0.7)/(w))
-
     beta_max = 1/(1+ra)     
     assert  max(beta)  < beta_max
     
+    # Calibrate lumpsum transfers to match income gini 
     Tss = lumpsum_T + nonlintax_guess
     T_dist = 0.1
     T = transfers(pi_ern, Tss, e_grid, T_dist)     
@@ -854,7 +724,7 @@ def ss_calib(calib, settings):
             kappa = kappa_g
             beta_var  = beta_var_guess   
             beta_disp = beta_disp_guess    
-            args.update({'beta_var' : beta_var, 'beta_disp' : beta_disp, 'kappa' : kappa})     
+            args.update({'beta_var' : beta_var, 'beta_disp' : beta_disp, 'kappa' : kappa, 'h_con' : h_con})     
                         
                    
             print('Beta distribution:', beta_mid_guess, beta_var_guess, beta_disp_guess ) 
@@ -878,7 +748,7 @@ def ss_calib(calib, settings):
             raise ValueError('No calibration chosen!')
 
     args.update({'beta' : beta, 'kappa' : kappa, 'Pi_seed' : Pi_seed, 'pi_e' : pi_e, 'Pi' : Pi, 'pi_beta' : pi_beta })   
-    print(beta_mid, beta_var, beta_disp)
+
     ss =   EGMhousehold.ss(**args)    
     if save == True:
         np.savez('init_values', x = ss['EVa'])
@@ -920,13 +790,6 @@ def ss_calib(calib, settings):
 
     print('Average Beta' , np.vdot(beta, pi_beta))
 
-    
-    # Check bargaining set 
-    upper_lvl =  (1-alpha) * mc / N
-    lower_lvl = b
-
-    assert w < upper_lvl
-    assert w > lower_lvl  
 
     ss.update({'A_agg' : ss['A'], 'C_agg' : ss['C'], 'taxes' : ss['TINC']})
     
@@ -941,294 +804,294 @@ def ss_calib(calib, settings):
 
     
 #calib = 'Full_calib'     # Calibrate to all moments in wealth distribution
-#calib = 'Partial_calib'   # Calibrate asset market equilibrium A = p + B
-# calib = 'Solve'          # Solve with pre-specified values 
+# calib = 'Partial_calib'  # Calibrate asset market equilibrium A = p + B
+calib = 'Solve'          # Solve with pre-specified values 
    
 
-# settings = {'save' : True, 'use_saved' : True}
-# settings['Fvac_share'] = False 
+settings = {'save' : True, 'use_saved' : True}
+settings['Fvac_share'] = False 
 
-# # choose labor market 
-# settings['SAM_model'] = 'Standard'
-# #settings['SAM_model'] = 'Costly_vac_creation'
-# #settings['SAM_model_variant'] = 'FR'
-# settings['SAM_model_variant'] = 'simple'
+# choose labor market 
+settings['SAM_model'] = 'Standard'
+#settings['SAM_model'] = 'Costly_vac_creation'
+#settings['SAM_model_variant'] = 'FR'
+settings['SAM_model_variant'] = 'simple'
 
-# settings['endo_destrNO'] = False
-# settings['endo_destrO'] = False 
+settings['endo_destrNO'] = False
+settings['endo_destrO'] = False 
 
-# # some calibration for labor market 
-# settings['Fvac_factor'] = 5
-# settings['vac2w_costs'] = 0.05 
+# some calibration for labor market 
+settings['Fvac_factor'] = 5
+settings['vac2w_costs'] = 0.05 
 
-# # solve the steady state 
-# ss = ss_calib(calib, settings)     
+# solve the steady state 
+ss = ss_calib(calib, settings)     
 
 
 #%%   Impulses 
     
 
-"(mc, Y) -> (nkpc)"
-@simple
-def pricing(pi, mc, Y, kappap, mup, r, rstar, eps_p):    
-    eps_p = mup / (mup-1)
-    nkpc = (1-eps_p) + eps_p * mc - kappap * (pi+1) * pi   + kappap * Y(+1) / Y *  (pi(+1)+1) * pi(+1)  / (1 + r(+1))
-    return nkpc  
-
-
-@solved(unknowns=['K', 'Q', 'I'], targets=['inv', 'val', 'K_res'])
-def firm_investment(K,  alpha, rstar, delta, kappak, Q, mc, Y, Z_I, I, r):       
-    rk_plus =  alpha * mc(+1) * Y(+1) / K 
-    inv = Q - (rk_plus + Q(+1) * (1-delta))/(1+r(+1))
-    LHS = 1 + kappak/2 * (I/I(-1) -1)**2   + I/I(-1) * kappak * (I/I(-1) -1) 
-    RHS = Q(+1) * Z_I(+1)  + kappak * (I(+1)/I -1) * (I(+1)/I)**2   
-    val = LHS - RHS     
-    K_res = K - ((1 - delta) * K(-1) + I(-1) * Z_I) 
-    return inv, val, K_res
+# "(mc, Y) -> (nkpc)"
+# @simple
+# def pricing(pi, mc, Y, kappap, mup, r, rstar, eps_p):    
+#     eps_p = mup / (mup-1)
+#     nkpc = (1-eps_p) + eps_p * mc - kappap * (pi+1) * pi   + kappap * Y(+1) / Y *  (pi(+1)+1) * pi(+1)  / (1 + r(+1))
+#     return nkpc  
 
 
 # @solved(unknowns=['K', 'Q', 'I'], targets=['inv', 'val', 'K_res'])
-# def firm_investment1(K,  alpha, rstar, delta, kappak, Q, mc, Y, Z_I, I, r):
-#     epsI = 3 
-#     MPK = alpha * mc(+1) * Y(+1) / K 
-#     inv = (K/K(-1) - 1) / (delta * epsI) + 1 - Q * Z_I
+# def firm_investment(K,  alpha, rstar, delta, kappak, Q, mc, Y, Z_I, I, r):       
+#     rk_plus =  alpha * mc(+1) * Y(+1) / K 
+#     inv = Q - (rk_plus + Q(+1) * (1-delta))/(1+r(+1))
+#     LHS = 1 + kappak/2 * (I/I(-1) -1)**2   + I/I(-1) * kappak * (I/I(-1) -1) 
+#     RHS = Q(+1) * Z_I(+1)  + kappak * (I(+1)/I -1) * (I(+1)/I)**2   
+#     val = LHS - RHS     
+#     K_res = K - ((1 - delta) * K(-1) + I(-1) * Z_I) 
+#     return inv, val, K_res
+
+
+# # @solved(unknowns=['K', 'Q', 'I'], targets=['inv', 'val', 'K_res'])
+# # def firm_investment1(K,  alpha, rstar, delta, kappak, Q, mc, Y, Z_I, I, r):
+# #     epsI = 3 
+# #     MPK = alpha * mc(+1) * Y(+1) / K 
+# #     inv = (K/K(-1) - 1) / (delta * epsI) + 1 - Q * Z_I
     
-#     val = MPK  - (K(+1)/K -
-#             (1-delta) + (K(+1)/K - 1)**2 / (2*delta*epsI)) + K(+1)/K*Q(+1) - (1 + r(+1))*Q
-#     K_res = K - ((1 - delta) * K(-1) + I * Z_I) 
-#     return inv, val, K_res, MPK
+# #     val = MPK  - (K(+1)/K -
+# #             (1-delta) + (K(+1)/K - 1)**2 / (2*delta*epsI)) + K(+1)/K*Q(+1) - (1 + r(+1))*Q
+# #     K_res = K - ((1 - delta) * K(-1) + I * Z_I) 
+# #     return inv, val, K_res, MPK
 
-@simple
-def firm_labor_standard(mc, Y, N, alpha, pMatch, vacK, destr, w,  L, rstar, r, Z, JV, JM, mu, K):   
-    MPL = (1-alpha)  * mc * Y / N   
-    free_entry = JV - 0
-    JV_res = JV - (- vacK + pMatch * JM)
-    JM_res = JM - ((MPL - w - mu) + JM(+1) * (1-destr)/(1+r(+1)))         
-    return  free_entry, JV_res, JM_res , MPL
+# @simple
+# def firm_labor_standard(mc, Y, N, alpha, pMatch, vacK, destr, w,  L, rstar, r, Z, JV, JM, mu, K):   
+#     MPL = (1-alpha)  * mc * Y / N   
+#     free_entry = JV - 0
+#     JV_res = JV - (- vacK + pMatch * JM)
+#     JM_res = JM - ((MPL - w - mu) + JM(+1) * (1-destr)/(1+r(+1)))         
+#     return  free_entry, JV_res, JM_res , MPL
 
-@simple
-def ProdFunc(Y, Z, K, alpha, L): 
-    ProdFunc_Res = Y - Z * K(-1)**alpha * L**(1-alpha)
-    return ProdFunc_Res
+# @simple
+# def ProdFunc(Y, Z, K, alpha, L): 
+#     ProdFunc_Res = Y - Z * K(-1)**alpha * L**(1-alpha)
+#     return ProdFunc_Res
     
 
-@solved(unknowns=['w'], targets=['w_res'])
-def wages(Tight, w, wss, Tightss, pi): 
-    eta =  0.005
-    w_res = np.log(w) - (np.log(wss) + eta * np.log(Tight/Tightss) )    
-    return w_res
+# @solved(unknowns=['w'], targets=['w_res'])
+# def wages(Tight, w, wss, Tightss, pi): 
+#     eta =  0.005
+#     w_res = np.log(w) - (np.log(wss) + eta * np.log(Tight/Tightss) )    
+#     return w_res
 
 
-@simple
-def laborMarket1(q, N, destr, S, pMatch, Tight):
-    N_res = N - ((1-destr(-1)) * N(-1) + S * q)    
-    S_res = S - (1 - (1-destr(-1)) * N(-1))
-    V = q * S / pMatch
-    N_ = N
-    return N_res, S_res, V, N_
+# @simple
+# def laborMarket1(q, N, destr, S, pMatch, Tight):
+#     N_res = N - ((1-destr(-1)) * N(-1) + S * q)    
+#     S_res = S - (1 - (1-destr(-1)) * N(-1))
+#     V = q * S / pMatch
+#     N_ = N
+#     return N_res, S_res, V, N_
 
-@simple
-def laborMarket2(Tight, ma): 
-    q      = Tight / ((1+Tight**ma)**(1/ma))
-    pMatch = q / Tight
-    return q, pMatch
-
-
-@simple 
-def MutFund(B, A_agg, r, ra, div,  p, pshare):
-    MF_Div = pshare * (div + p) / p(-1) + (1-pshare) * (1 + r) 
-    MF_Div_res = 1+ra - MF_Div
-    return  MF_Div_res, MF_Div
-
-@solved(unknowns=['p'], targets=['equity'])
-def arbitrage(div, p, r):
-    equity = div(+1) + p(+1) - p * (1 + r(+1))
-    return equity
+# @simple
+# def laborMarket2(Tight, ma): 
+#     q      = Tight / ((1+Tight**ma)**(1/ma))
+#     pMatch = q / Tight
+#     return q, pMatch
 
 
-@simple
-def dividend_standard(Y, w, N, pi, mup, vacK, V, I, kappap, F_cost, kappak, T_firms):
-    psip = kappap  * pi ** 2 * Y / 2 
-    Isip = kappak * (I/I(-1) -1)**2 * I /2
-    div = Y  - w * N -   vacK  - I  - psip - Isip - F_cost - T_firms 
-    return psip, Isip, div
+# @simple 
+# def MutFund(B, A_agg, r, ra, div,  p, pshare):
+#     MF_Div = pshare * (div + p) / p(-1) + (1-pshare) * (1 + r) 
+#     MF_Div_res = 1+ra - MF_Div
+#     return  MF_Div_res, MF_Div
+
+# @solved(unknowns=['p'], targets=['equity'])
+# def arbitrage(div, p, r):
+#     equity = div(+1) + p(+1) - p * (1 + r(+1))
+#     return equity
 
 
-@simple
-def dividend_costly_vac(Y, w, N, pi, mup, vacK, V, I, kappap, F_cost, kappak, T_firms, nPos, Fvac, mu):
-    psip = kappap  * pi ** 2 * Y / 2 
-    Isip = kappak * (I/I(-1) -1)**2 * I /2
-    div = Y - w * N  -  vacK - Fvac * nPos**2 - mu - I  - psip - Isip - F_cost - T_firms 
-    return psip, Isip, div
-
-@solved(unknowns=[ 'i',  'r'], targets=['i_res',  'fisher'])
-def monetary(rstar, pi, i, r, phi):
-    rho   = 0.8
-    i_res = i - (rho * i(-1) + (1-rho) * (rstar + phi * pi))    
-    fisher = 1 + i(-1) - (1 + r) * (1 + pi)
-    return i_res, fisher 
+# @simple
+# def dividend_standard(Y, w, N, pi, mup, vacK, V, I, kappap, F_cost, kappak, T_firms):
+#     psip = kappap  * pi ** 2 * Y / 2 
+#     Isip = kappak * (I/I(-1) -1)**2 * I /2
+#     div = Y  - w * N -   vacK  - I  - psip - Isip - F_cost - T_firms 
+#     return psip, Isip, div
 
 
-@simple 
-def fiscal_rev(C, VAT, B, taxes,  MF_Div, T_firms):  
-    G_rev = taxes  + B  + T_firms 
-    return G_rev
+# @simple
+# def dividend_costly_vac(Y, w, N, pi, mup, vacK, V, I, kappap, F_cost, kappak, T_firms, nPos, Fvac, mu):
+#     psip = kappap  * pi ** 2 * Y / 2 
+#     Isip = kappak * (I/I(-1) -1)**2 * I /2
+#     div = Y - w * N  -  vacK - Fvac * nPos**2 - mu - I  - psip - Isip - F_cost - T_firms 
+#     return psip, Isip, div
 
-@simple 
-def fiscal_exp(b, r, G, B, N, lumpsum_T, uT, UINCAGG): 
-    G_exp = G + UINCAGG  + (lumpsum_T + uT)  + B(-1) * (1+r) 
-    return G_exp
-
-@simple 
-def B_res(G_rev, G_exp):  
-    B_res = G_rev - G_exp
-    return B_res
-
-@simple 
-def HHTransfer(uT):  
-    Tuni  = uT
-    return Tuni
-
-@simple 
-def Fiscal_stab_G(B, Bss, lumpsum_T, P, rg):  
-    rho = 0.8
-    G = ss['G'] - 0.1 *  np.log(B/Bss)
-    return  G
-
-@simple
-def Fiscal_stab_T(B, Bss):  
-    uT =  - 0.2 *  np.log(B(-1)/Bss)
-    Tuni = uT
-    return  uT, Tuni
+# @solved(unknowns=[ 'i',  'r'], targets=['i_res',  'fisher'])
+# def monetary(rstar, pi, i, r, phi):
+#     rho   = 0.8
+#     i_res = i - (rho * i(-1) + (1-rho) * (rstar + phi * pi))    
+#     fisher = 1 + i(-1) - (1 + r) * (1 + pi)
+#     return i_res, fisher 
 
 
-@simple
-def Asset_mkt_clearing(A_agg, B, p):  
-    Asset_mkt = B + p - A_agg 
-    return Asset_mkt    
+# @simple 
+# def fiscal_rev(C, VAT, B, taxes,  MF_Div, T_firms):  
+#     G_rev = taxes  + B  + T_firms 
+#     return G_rev
 
-@simple
-def Labor_mkt_clearing(N, L):     
-    Labor_mkt = L  -  N
-    return Labor_mkt    
+# @simple 
+# def fiscal_exp(b, r, G, B, N, lumpsum_T, uT, UINCAGG): 
+#     G_exp = G + UINCAGG  + (lumpsum_T + uT)  + B(-1) * (1+r) 
+#     return G_exp
 
+# @simple 
+# def B_res(G_rev, G_exp):  
+#     B_res = G_rev - G_exp
+#     return B_res
 
-@simple
-def aggregate(CN, CS, AN, AS, N, ssN, TAXN, TAXS, UINCAGG, TINC, CTD, ATD):
-    dN =  N/ssN
-    dU = (1-N)/(1-ssN)  
-    C_agg =  CTD  
-    A_agg = ATD     
-    taxes = TINC
-    UINCAGG_count  =  UINCAGG * dU
-    return C_agg, A_agg, taxes, UINCAGG_count
+# @simple 
+# def HHTransfer(uT):  
+#     Tuni  = uT
+#     return Tuni
 
+# @simple 
+# def Fiscal_stab_G(B, Bss, lumpsum_T, P, rg):  
+#     rho = 0.8
+#     G = ss['G'] - 0.1 *  np.log(B/Bss)
+#     return  G
 
-
-'''Simple FR LM'''
-@simple
-def firm_labor_costly_vac(N, mc, Y, alpha, pMatch, vacK, destr, w,  L, rstar, r, nPos, Fvac, JV, JM, mu):   
-    MPL = (1-alpha) *  mc * Y / N
-    free_entry = JV -  nPos * Fvac
-    JV_res = JV - (- vacK + pMatch * JM + (1-pMatch) * JV(+1) /(1+r(+1)))
-    JM_res = JM - ((MPL-w - mu) + JM(+1) * (1-destr)/(1+r(+1)))    
-    return  free_entry, JV_res, JM_res, MPL
-
-@simple
-def laborMarket1_costly_vac(q, N, destr, S, pMatch, V):
-    N_res = N - ((1-destr(-1)) * N(-1) + S * q )    
-    S_res = S - (1 - (1-destr(-1)) * N(-1))
-    Match_res = V * pMatch - q * S 
-    nPos = V - (1-pMatch(-1)) * V(-1) 
-    N_ = N
-    return N_res, S_res, Match_res, N_, nPos 
-
-'''Fujita & Ramey LM'''
-@simple
-def firm_labor_costly_vac_FR(N, mc, Y, alpha, pMatch, vacK, destr,destrO, w,  L, rstar, r, nPos, Fvac, JV, JM, mu, muV, destrNO):   
-    MPL = (1-alpha) *  mc * Y / N
-    free_entry = JV - nPos * Fvac
-    JV_res = JV - (- vacK - muV + pMatch * JM +(1-pMatch) * (1-destrO) * JV(+1) /(1+r(+1)))
-    JM_res = JM - ((MPL - w - mu) + (1-destrO) * (1-destrNO)/(1+r(+1)) * JM(+1) + destrNO * (1-destrO)  * JV(+1) /(1+r(+1)) )  
-    return  free_entry, JV_res, JM_res, MPL
-
-@simple
-def laborMarket1_costly_vac_FR(q, N, destr, S, pMatch, destrO, destrNO, V):
-    N_res = N - ((1-destr(-1)) * N(-1) + S * q * (1-destrO(-1)))    
-    S_res = S - (1 - (1-destr(-1)) * N(-1))
-    Match_res = V * pMatch - q * S 
-    nPos = V - (1-destrO(-1)) * (V(-1) + destrNO(-1) * N(-1) -  V(-1) * pMatch(-1)) 
-    N_ = N 
-    return N_res, S_res, Match_res, nPos, N_ 
-
-@simple
-def destr_rate(destrO, destrNO):
-    destr = destrNO * (1-destrO) + destrO
-    return destr
-
-@simple
-def destr_rate_lag(destrO, destr):
-    destr_L  =  destr(-1)
-    destrO_L =  destrO(-1)
-    return destr_L, destrO_L
+# @simple
+# def Fiscal_stab_T(B, Bss):  
+#     uT =  - 0.2 *  np.log(B(-1)/Bss)
+#     Tuni = uT
+#     return  uT, Tuni
 
 
-@simple
-def Eq(q):
-    Eq  =  q
-    return Eq
+# @simple
+# def Asset_mkt_clearing(A_agg, B, p):  
+#     Asset_mkt = B + p - A_agg 
+#     return Asset_mkt    
 
-@simple
-def endo_destr(destrNO, destrNOss, JMss, eps_m, rstar, JM, r, destrO):
-    destrNO_Res = destrNO - destrNOss * ( (1+rstar) / (1+r(+1)) * JM(+1)/JMss)**(-eps_m)
-    mu = destrNOss * eps_m / (eps_m-1) * JMss * (1-destrO) / (1+rstar) * (1 - ((1+rstar) / (1+r(+1)) *JM(+1)/JMss)**(1-eps_m))
-    return mu, destrNO_Res 
+# @simple
+# def Labor_mkt_clearing(N, L):     
+#     Labor_mkt = L  -  N
+#     return Labor_mkt    
 
-@simple
-def endo_destrO(destrO, destrOss, JVss, eps_V, rstar, JV, r):
-    destrO_Res = destrO - destrOss * ( (1+rstar) / (1+r(+1)) * JV(+1)/JVss)**(-eps_V)
-    muV = destrOss * eps_V / (eps_V-1) * JVss  / (1+rstar) * (1 - ((1+rstar) / (1+r(+1)) *JV(+1)/JVss)**(1-eps_V))
-    return muV, destrO_Res 
+
+# @simple
+# def aggregate(CN, CS, AN, AS, N, ssN, TAXN, TAXS, UINCAGG, TINC, CTD, ATD):
+#     dN =  N/ssN
+#     dU = (1-N)/(1-ssN)  
+#     C_agg =  CTD  
+#     A_agg = ATD     
+#     taxes = TINC
+#     UINCAGG_count  =  UINCAGG * dU
+#     return C_agg, A_agg, taxes, UINCAGG_count
 
 
 
-# function used to to choose labor market model 
-def Choose_LM(settings):
-    if settings['SAM_model'] == 'Standard':
-        dividend = dividend_standard
-        LM = solved(block_list=[laborMarket1, laborMarket2, firm_labor_standard, wages, destr_rate],  
-                    unknowns=['N', 'S', 'Tight',  'JV', 'JM'],
-                    targets=[ 'N_res', 'S_res',  'free_entry', 'JV_res', 'JM_res'] )  
-        if settings['endo_destrNO'] == True:
-            LM = solved(block_list=[laborMarket1, laborMarket2, firm_labor_standard, wages, destr_rate, endo_destr],  
-                        unknowns=['N', 'S', 'Tight',  'JV', 'JM', 'destrNO'],
-                        targets=[ 'N_res', 'S_res',  'free_entry', 'JV_res', 'JM_res', 'destrNO_Res'] )              
+# '''Simple FR LM'''
+# @simple
+# def firm_labor_costly_vac(N, mc, Y, alpha, pMatch, vacK, destr, w,  L, rstar, r, nPos, Fvac, JV, JM, mu):   
+#     MPL = (1-alpha) *  mc * Y / N
+#     free_entry = JV -  nPos * Fvac
+#     JV_res = JV - (- vacK + pMatch * JM + (1-pMatch) * JV(+1) /(1+r(+1)))
+#     JM_res = JM - ((MPL-w - mu) + JM(+1) * (1-destr)/(1+r(+1)))    
+#     return  free_entry, JV_res, JM_res, MPL
+
+# @simple
+# def laborMarket1_costly_vac(q, N, destr, S, pMatch, V):
+#     N_res = N - ((1-destr(-1)) * N(-1) + S * q )    
+#     S_res = S - (1 - (1-destr(-1)) * N(-1))
+#     Match_res = V * pMatch - q * S 
+#     nPos = V - (1-pMatch(-1)) * V(-1) 
+#     N_ = N
+#     return N_res, S_res, Match_res, N_, nPos 
+
+# '''Fujita & Ramey LM'''
+# @simple
+# def firm_labor_costly_vac_FR(N, mc, Y, alpha, pMatch, vacK, destr,destrO, w,  L, rstar, r, nPos, Fvac, JV, JM, mu, muV, destrNO):   
+#     MPL = (1-alpha) *  mc * Y / N
+#     free_entry = JV - nPos * Fvac
+#     JV_res = JV - (- vacK - muV + pMatch * JM +(1-pMatch) * (1-destrO) * JV(+1) /(1+r(+1)))
+#     JM_res = JM - ((MPL - w - mu) + (1-destrO) * (1-destrNO)/(1+r(+1)) * JM(+1) + destrNO * (1-destrO)  * JV(+1) /(1+r(+1)) )  
+#     return  free_entry, JV_res, JM_res, MPL
+
+# @simple
+# def laborMarket1_costly_vac_FR(q, N, destr, S, pMatch, destrO, destrNO, V):
+#     N_res = N - ((1-destr(-1)) * N(-1) + S * q * (1-destrO(-1)))    
+#     S_res = S - (1 - (1-destr(-1)) * N(-1))
+#     Match_res = V * pMatch - q * S 
+#     nPos = V - (1-destrO(-1)) * (V(-1) + destrNO(-1) * N(-1) -  V(-1) * pMatch(-1)) 
+#     N_ = N 
+#     return N_res, S_res, Match_res, nPos, N_ 
+
+# @simple
+# def destr_rate(destrO, destrNO):
+#     destr = destrNO * (1-destrO) + destrO
+#     return destr
+
+# @simple
+# def destr_rate_lag(destrO, destr):
+#     destr_L  =  destr(-1)
+#     destrO_L =  destrO(-1)
+#     return destr_L, destrO_L
+
+
+# @simple
+# def Eq(q):
+#     Eq  =  q
+#     return Eq
+
+# @simple
+# def endo_destr(destrNO, destrNOss, JMss, eps_m, rstar, JM, r, destrO):
+#     destrNO_Res = destrNO - destrNOss * ( (1+rstar) / (1+r(+1)) * JM(+1)/JMss)**(-eps_m)
+#     mu = destrNOss * eps_m / (eps_m-1) * JMss * (1-destrO) / (1+rstar) * (1 - ((1+rstar) / (1+r(+1)) *JM(+1)/JMss)**(1-eps_m))
+#     return mu, destrNO_Res 
+
+# @simple
+# def endo_destrO(destrO, destrOss, JVss, eps_V, rstar, JV, r):
+#     destrO_Res = destrO - destrOss * ( (1+rstar) / (1+r(+1)) * JV(+1)/JVss)**(-eps_V)
+#     muV = destrOss * eps_V / (eps_V-1) * JVss  / (1+rstar) * (1 - ((1+rstar) / (1+r(+1)) *JV(+1)/JVss)**(1-eps_V))
+#     return muV, destrO_Res 
+
+
+
+# # function used to to choose labor market model 
+# def Choose_LM(settings):
+#     if settings['SAM_model'] == 'Standard':
+#         dividend = dividend_standard
+#         LM = solved(block_list=[laborMarket1, laborMarket2, firm_labor_standard, wages, destr_rate],  
+#                     unknowns=['N', 'S', 'Tight',  'JV', 'JM'],
+#                     targets=[ 'N_res', 'S_res',  'free_entry', 'JV_res', 'JM_res'] )  
+#         if settings['endo_destrNO'] == True:
+#             LM = solved(block_list=[laborMarket1, laborMarket2, firm_labor_standard, wages, destr_rate, endo_destr],  
+#                         unknowns=['N', 'S', 'Tight',  'JV', 'JM', 'destrNO'],
+#                         targets=[ 'N_res', 'S_res',  'free_entry', 'JV_res', 'JM_res', 'destrNO_Res'] )              
             
-    elif settings['SAM_model'] == 'Costly_vac_creation':
-        dividend = dividend_costly_vac
-        if settings['SAM_model_variant'] == 'simple':    
-            LM = solved(block_list=[laborMarket1_costly_vac, laborMarket2, firm_labor_costly_vac, wages, destr_rate],  
-                        unknowns=['N', 'S', 'Tight', 'V', 'JV', 'JM'],
-                        targets=[ 'N_res', 'S_res', 'Match_res', 'free_entry', 'JV_res', 'JM_res'] )  
-            if settings['endo_destrNO'] == True:
-                LM = solved(block_list=[laborMarket1_costly_vac, laborMarket2, firm_labor_costly_vac, wages, destr_rate, endo_destr],  
-                            unknowns=['N', 'S', 'Tight', 'V', 'JV', 'JM', 'destrNO'],
-                            targets=[ 'N_res', 'S_res', 'Match_res', 'free_entry', 'JV_res', 'JM_res', 'destrNO_Res'] )                  
-        elif settings['SAM_model_variant'] == 'FR': 
-            LM = solved(block_list=[laborMarket1_costly_vac_FR, laborMarket2, firm_labor_costly_vac_FR, wages, destr_rate],  
-                        unknowns=['N', 'S', 'Tight', 'V', 'JV', 'JM'],
-                        targets=[ 'N_res', 'S_res', 'Match_res', 'free_entry', 'JV_res', 'JM_res'] )  
-            if settings['endo_destrNO'] == True:
-                LM = solved(block_list=[laborMarket1_costly_vac_FR, laborMarket2, firm_labor_costly_vac_FR, wages, destr_rate, endo_destr],  
-                            unknowns=['N', 'S', 'Tight', 'V', 'JV', 'JM', 'destrNO'],
-                            targets=[ 'N_res', 'S_res', 'Match_res', 'free_entry', 'JV_res', 'JM_res', 'destrNO_Res'] )  
-            elif settings['endo_destrO'] == True:
-                LM = solved(block_list=[laborMarket1_costly_vac_FR, laborMarket2, firm_labor_costly_vac_FR, wages, destr_rate, endo_destrO],  
-                            unknowns=['N', 'S', 'Tight', 'V', 'JV', 'JM', 'destrO'],
-                            targets=[ 'N_res', 'S_res', 'Match_res', 'free_entry', 'JV_res', 'JM_res', 'destrO_Res'] )        
-    return dividend, LM 
+#     elif settings['SAM_model'] == 'Costly_vac_creation':
+#         dividend = dividend_costly_vac
+#         if settings['SAM_model_variant'] == 'simple':    
+#             LM = solved(block_list=[laborMarket1_costly_vac, laborMarket2, firm_labor_costly_vac, wages, destr_rate],  
+#                         unknowns=['N', 'S', 'Tight', 'V', 'JV', 'JM'],
+#                         targets=[ 'N_res', 'S_res', 'Match_res', 'free_entry', 'JV_res', 'JM_res'] )  
+#             if settings['endo_destrNO'] == True:
+#                 LM = solved(block_list=[laborMarket1_costly_vac, laborMarket2, firm_labor_costly_vac, wages, destr_rate, endo_destr],  
+#                             unknowns=['N', 'S', 'Tight', 'V', 'JV', 'JM', 'destrNO'],
+#                             targets=[ 'N_res', 'S_res', 'Match_res', 'free_entry', 'JV_res', 'JM_res', 'destrNO_Res'] )                  
+#         elif settings['SAM_model_variant'] == 'FR': 
+#             LM = solved(block_list=[laborMarket1_costly_vac_FR, laborMarket2, firm_labor_costly_vac_FR, wages, destr_rate],  
+#                         unknowns=['N', 'S', 'Tight', 'V', 'JV', 'JM'],
+#                         targets=[ 'N_res', 'S_res', 'Match_res', 'free_entry', 'JV_res', 'JM_res'] )  
+#             if settings['endo_destrNO'] == True:
+#                 LM = solved(block_list=[laborMarket1_costly_vac_FR, laborMarket2, firm_labor_costly_vac_FR, wages, destr_rate, endo_destr],  
+#                             unknowns=['N', 'S', 'Tight', 'V', 'JV', 'JM', 'destrNO'],
+#                             targets=[ 'N_res', 'S_res', 'Match_res', 'free_entry', 'JV_res', 'JM_res', 'destrNO_Res'] )  
+#             elif settings['endo_destrO'] == True:
+#                 LM = solved(block_list=[laborMarket1_costly_vac_FR, laborMarket2, firm_labor_costly_vac_FR, wages, destr_rate, endo_destrO],  
+#                             unknowns=['N', 'S', 'Tight', 'V', 'JV', 'JM', 'destrO'],
+#                             targets=[ 'N_res', 'S_res', 'Match_res', 'free_entry', 'JV_res', 'JM_res', 'destrO_Res'] )        
+#     return dividend, LM 
         
-#dividend, LM = Choose_LM(settings)
+# dividend, LM = Choose_LM(settings)
 
 # Asset_block_G = solved(block_list=[ fiscal_rev, fiscal_exp, B_res, dividend, EGMhousehold,  arbitrage, MutFund, Fiscal_stab_G,  aggregate],
 #                 unknowns=[ 'B',  'ra'],
@@ -1254,20 +1117,19 @@ def Choose_LM(settings):
 #                 unknowns=[ 'pi', 'Y'],
 #                 targets=[  'nkpc' , 'ProdFunc_Res' ] )  
 
- 
-#Time = 300   
 
-# markup shock 
+# Time = 300    
+
+# # markup shock 
 # Ivar = 'mup'
 # exogenous = [Ivar]  
 # rhos = 0.6
 # dZ =  0.13 *ss[Ivar] * rhos**(np.arange(Time))
 
-
 # exogenous = [Ivar]   
 # unknowns = ['L', 'mc']
 # targets = ['Asset_mkt', 'Labor_mkt']
-#block_list = [LM, Asset_block_T, prod_stuff, Asset_mkt_clearing, Labor_mkt_clearing, destr_rate_lag, dividend, Eq] 
+# block_list = [LM, Asset_block_T, prod_stuff, Asset_mkt_clearing, Labor_mkt_clearing, destr_rate_lag, dividend, Eq] 
  
 # G_jac = jac.get_G(block_list, exogenous, unknowns, targets,  Time, ss, save=False)
 # dMat = FigUtils.Shock_mult(G_jac, dZ, Ivar) # multiply Jacobian and shock 
